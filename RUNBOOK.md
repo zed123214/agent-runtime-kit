@@ -83,6 +83,14 @@ make docs
 make verify-s0
 ```
 
+On native Windows, if `uv` script entry points fail with a trampoline path
+error, run tools through Python modules instead:
+
+```bash
+uv run python -m mypy src
+uv run python -m pytest tests/ -v
+```
+
 ## Logs
 
 ```bash

@@ -8,7 +8,7 @@
   3. 收到 permission.requested → 自动回复 allow_once
   4. 等待 run.finished，打印全部事件日志
 
-运行：uv run python trace_permission_flow.py
+运行：uv run python examples/permissions/trace_permission_flow.py
 """
 from __future__ import annotations
 
