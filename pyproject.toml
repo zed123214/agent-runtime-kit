@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-runtime-kit"
+version = "0.0.1"
+description = "Local AI Agent runtime framework with daemon execution, typed IPC, events, permissions, sessions, and MCP tools."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "anthropic>=0.25",
+    "textual>=0.75",
+    "httpx[socks]>=0.28.1",
+]
+
+[project.scripts]
+agentrt = "agent_runtime.cli.main:main"
+agentrt-core = "agent_runtime.core.app:run"
+agentrt-tui = "agent_runtime.tui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_runtime"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["E501"]
+"scripts/**/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: marks tests that call the real Anthropic API (require ANTHROPIC_API_KEY)",
+]
