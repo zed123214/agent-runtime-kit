@@ -66,9 +66,9 @@ graph TD
 7. **上下文治理**：支持 tool result 截断、context 水位监控，以及用 compact 摘要替换过大的历史上下文。
 8. **Skills、Subagents 与 MCP**：Markdown Skills、隔离上下文的子 Agent 和 MCP 工具复用同一套工具注册、权限、事件和运行器基础设施。
 
-## 简历证据映射
+## 简历映射
 
-| 简历表述 | 仓库中的证据 |
+| 简历表述 | 仓库 |
 | --- | --- |
 | Daemon + CLI/TUI 多进程架构 | `src/agent_runtime/core/app.py`、`src/agent_runtime/cli/`、`src/agent_runtime/tui/`、`docs/architecture.md` |
 | JSON-RPC 2.0 over NDJSON TCP | `src/agent_runtime/core/bus/`、`src/agent_runtime/core/transport/`、`WIRE_PROTOCOL.md` |
