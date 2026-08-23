@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime.core.config import get_config
+from agent_runtime.core.config import RuntimeConfig, get_config
+
+_GRAPH_ENV_NAMES = (
+    "AGENTRT_GRAPH_RECURSION_LIMIT",
+    "AGENTRT_GRAPH_TOOL_CALL_BUDGET",
+    "AGENTRT_GRAPH_WALL_TIME_S",
+    "AGENTRT_GRAPH_TRACE_EVENT_LIMIT",
+)
 
 
 def _write_env(path: Path, content: str) -> None:
@@ -85,3 +92,90 @@ def test_priority_chain_full(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     cfg = get_config()
 
     assert cfg.port == 8000
+
+
+def test_graph_config_defaults() -> None:
+    graph = RuntimeConfig().graph
+
+    assert graph.recursion_limit is None
+    assert graph.tool_call_budget == 64
+    assert graph.wall_time_s == 300.0
+    assert graph.trace_event_limit == 64
+
+
+def test_graph_config_loads_toml_and_environment_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "graph.toml"
+    config_path.write_bytes(
+        b"""[graph]
+recursion_limit = 21
+tool_call_budget = 22
+wall_time_s = 23.5
+trace_event_limit = 24
+"""
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTRT_CONFIG", str(config_path))
+    monkeypatch.setenv("AGENTRT_GRAPH_RECURSION_LIMIT", "31")
+    monkeypatch.setenv("AGENTRT_GRAPH_TOOL_CALL_BUDGET", "32")
+    monkeypatch.setenv("AGENTRT_GRAPH_WALL_TIME_S", "33.5")
+    monkeypatch.setenv("AGENTRT_GRAPH_TRACE_EVENT_LIMIT", "34")
+
+    graph = get_config().graph
+
+    assert graph.recursion_limit == 31
+    assert graph.tool_call_budget == 32
+    assert graph.wall_time_s == 33.5
+    assert graph.trace_event_limit == 34
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "recursion_limit = 0",
+        "tool_call_budget = -1",
+        "wall_time_s = 0.0",
+        "trace_event_limit = true",
+    ],
+)
+def test_graph_toml_requires_strictly_positive_non_boolean_values(
+    entry: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "invalid-graph.toml"
+    config_path.write_text(f"[graph]\n{entry}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTRT_CONFIG", str(config_path))
+    for name in _GRAPH_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(SystemExit, match=r"graph\..*positive"):
+        get_config()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("AGENTRT_GRAPH_RECURSION_LIMIT", "0"),
+        ("AGENTRT_GRAPH_TOOL_CALL_BUDGET", "-1"),
+        ("AGENTRT_GRAPH_WALL_TIME_S", "0"),
+        ("AGENTRT_GRAPH_TRACE_EVENT_LIMIT", "false"),
+    ],
+)
+def test_graph_environment_requires_strictly_positive_values(
+    name: str,
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENTRT_CONFIG", raising=False)
+    for env_name in _GRAPH_ENV_NAMES:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(SystemExit, match="Config error"):
+        get_config()

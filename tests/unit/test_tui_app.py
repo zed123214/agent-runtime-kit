@@ -85,6 +85,41 @@ def test_run_started_appends_widget_with_content() -> None:
     assert "do the thing" in rendered
 
 
+def test_graph_events_render_only_bounded_state_metadata() -> None:
+    app = AgentTuiApp("127.0.0.1", 9999)
+    appended: list[Widget] = []
+    app._append = lambda w: appended.append(w)  # type: ignore[method-assign]
+
+    app._handle_event({"type": "node.started", "node_id": "model"})
+    app._handle_event(
+        {
+            "type": "state.diff",
+            "node_id": "model",
+            "diff": {
+                "changed_fields": ["messages", "status", "private_payload"],
+                "message_count_before": 1,
+                "message_count_after": 2,
+                "step": 1,
+                "status": "running",
+                "messages": [{"content": "private conversation"}],
+                "private_payload": "sk-live-secret",
+            },
+        }
+    )
+    app._handle_event({"type": "node.finished", "node_id": "model", "status": "success"})
+
+    rendered = "\n".join(str(widget.content) for widget in appended)
+    assert "node" in rendered
+    assert "model" in rendered
+    assert "started" in rendered
+    assert "success" in rendered
+    assert "changed=messages,status" in rendered
+    assert "messages=1-&gt;2" in rendered or "messages=1->2" in rendered
+    assert "private conversation" not in rendered
+    assert "sk-live-secret" not in rendered
+    assert "private_payload" not in rendered
+
+
 # 功能：验证 run.finished success 追加包含 "completed" 的 widget
 # 设计：monkey-patch _append，检查 rendered 内容包含 completed 和 green
 def test_run_finished_success_shows_completed() -> None:

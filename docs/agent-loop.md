@@ -1,6 +1,9 @@
 # Agent Loop
 
-`AgentLoop` implements a ReAct-style plan-act-observe loop.
+`AgentLoop` implements a ReAct-style plan-act-observe loop. Production runs
+reach it through `AgentRunner -> ExecutionEngine -> LoopExecutionEngine ->
+AgentLoop`; the adapter delegates to this implementation rather than copying
+its model, tool, permission, compaction, or terminal-state logic.
 
 1. Send current context and tool schemas to the LLM provider.
 2. Stream token and usage events through `EventBus`.

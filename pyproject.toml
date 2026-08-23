@@ -16,6 +16,11 @@ dependencies = [
     "httpx[socks]>=0.28.1",
 ]
 
+[project.optional-dependencies]
+graph = [
+    "langgraph==1.2.8",
+]
+
 [project.scripts]
 agentrt = "agent_runtime.cli.main:main"
 agentrt-core = "agent_runtime.core.app:run"
@@ -55,5 +60,6 @@ explicit_package_bases = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
+    "graph: marks offline tests that require the optional graph extra",
     "integration: marks tests that call the real Anthropic API (require ANTHROPIC_API_KEY)",
 ]

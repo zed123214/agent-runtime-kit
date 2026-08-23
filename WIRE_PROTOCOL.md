@@ -173,7 +173,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
   "jsonrpc": "2.0",
   "id": "u-2",
   "result": {
-    "run_id": "20260516-100000-abc123"
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890"
   }
 }
 ```
@@ -465,7 +465,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
   "jsonrpc": "2.0",
   "id": "u-5",
   "result": {
-    "run_id": "20260516-100000-abc123"
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890"
   }
 }
 ```
@@ -581,6 +581,177 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 }
 ```
 
+### PermissionRespondCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `tool_use_id` | `string` | yes |
+| `decision` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "permission.respond",
+      "default": "permission.respond",
+      "title": "Type",
+      "type": "string"
+    },
+    "tool_use_id": {
+      "title": "Tool Use Id",
+      "type": "string"
+    },
+    "decision": {
+      "title": "Decision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_use_id",
+    "decision"
+  ],
+  "title": "PermissionRespondCommand",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-6",
+  "method": "permission.respond",
+  "params": {
+    "tool_use_id": "toolu_03",
+    "decision": "allow_once"
+  }
+}
+```
+
+### PermissionRespondResult
+
+| Field | Type | Required |
+|---|---|---|
+| `ok` | `boolean` | no |
+
+```json
+{
+  "properties": {
+    "ok": {
+      "default": true,
+      "title": "Ok",
+      "type": "boolean"
+    }
+  },
+  "title": "PermissionRespondResult",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-6",
+  "result": {
+    "ok": true
+  }
+}
+```
+
+### SessionCompactCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+| `focus` | `string` | no |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "session.compact",
+      "default": "session.compact",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "focus": {
+      "default": "",
+      "title": "Focus",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id"
+  ],
+  "title": "SessionCompactCommand",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-7",
+  "method": "session.compact",
+  "params": {
+    "session_id": "sess-abc123def456",
+    "focus": "\u4fdd\u7559\u5f53\u524d\u4efb\u52a1\u548c\u5de5\u5177\u7ed3\u679c"
+  }
+}
+```
+
+### SessionCompactResult
+
+| Field | Type | Required |
+|---|---|---|
+| `summary_tokens` | `integer` | yes |
+| `saved_tokens` | `integer` | yes |
+
+```json
+{
+  "properties": {
+    "summary_tokens": {
+      "title": "Summary Tokens",
+      "type": "integer"
+    },
+    "saved_tokens": {
+      "title": "Saved Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "summary_tokens",
+    "saved_tokens"
+  ],
+  "title": "SessionCompactResult",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-7",
+  "result": {
+    "summary_tokens": 1800,
+    "saved_tokens": 10200
+  }
+}
+```
+
 ## Server Push
 
 Events pushed from daemon to subscribed clients over the same TCP connection.
@@ -622,7 +793,10 @@ Events pushed from daemon to subscribed clients over the same TCP connection.
   "kind": "event",
   "event": {
     "type": "step.started",
-    "run_id": "20260516-100000-abc123",
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+    "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+    "session_id": "sess-abc123def456",
+    "node_id": null,
     "step": 1,
     "ts": "2026-05-16T10:00:00.001Z"
   }
@@ -670,28 +844,69 @@ Events sent over the IPC socket (daemon → client).
 
 ## Run Events
 
-Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients.
+Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients. Run-scoped payloads preserve their existing `type` and fields while adding optional `correlation_id`, `session_id`, and `node_id` metadata. `correlation_id` identifies the root run across child runs, `session_id` is populated only when a session exists, and `node_id` is populated only for a real engine node. Older payloads without these fields remain valid.
+
+`llm.reasoning`, `node.*`, and `state.diff` are typed boundaries reserved for engines that produce those facts. The default loop engine does not synthesize them.
 
 ### RunStartedEvent
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `goal` | `string` | yes |
 | `ts` | `string` | yes |
 
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "run.started",
       "default": "run.started",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "goal": {
@@ -718,7 +933,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "run.started",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "goal": "\u603b\u7ed3 README.md",
   "ts": "2026-05-16T10:00:00.001Z"
 }
@@ -728,29 +946,77 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
-| `status` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `status` | `object` | yes |
 | `reason` | `string | null` | no |
 | `steps` | `integer` | yes |
+| `error` | `object | null` | no |
 | `ts` | `string` | yes |
 
 ```json
 {
+  "$defs": {
+    "TerminalStatus": {
+      "enum": [
+        "success",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "run.finished",
       "default": "run.finished",
       "title": "Type",
       "type": "string"
     },
-    "run_id": {
-      "title": "Run Id",
-      "type": "string"
-    },
     "status": {
-      "title": "Status",
-      "type": "string"
+      "$ref": "#/$defs/TerminalStatus"
     },
     "reason": {
       "anyOf": [
@@ -767,6 +1033,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
     "steps": {
       "title": "Steps",
       "type": "integer"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
     },
     "ts": {
       "title": "Ts",
@@ -789,7 +1068,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "run.finished",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "status": "success",
   "reason": null,
   "steps": 2,
@@ -801,22 +1083,61 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `step` | `integer` | yes |
 | `ts` | `string` | yes |
 
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "step.started",
       "default": "step.started",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "step": {
@@ -843,7 +1164,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "step.started",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "step": 1,
   "ts": "2026-05-16T10:00:00.001Z"
 }
@@ -853,22 +1177,61 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `step` | `integer` | yes |
 | `ts` | `string` | yes |
 
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "step.finished",
       "default": "step.finished",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "step": {
@@ -895,8 +1258,269 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "step.finished",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "step": 1,
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### NodeStartedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string` | yes |
+| `type` | `string` | no |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "title": "Node Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "node.started",
+      "default": "node.started",
+      "title": "Type",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "node_id",
+    "ts"
+  ],
+  "title": "NodeStartedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "node.started",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": "model",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### NodeFinishedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string` | yes |
+| `type` | `string` | no |
+| `status` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "title": "Node Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "node.finished",
+      "default": "node.finished",
+      "title": "Type",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "node_id",
+    "status",
+    "ts"
+  ],
+  "title": "NodeFinishedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "node.finished",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": "model",
+  "status": "success",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### StateDiffEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string` | yes |
+| `type` | `string` | no |
+| `diff` | `object` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "title": "Node Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "state.diff",
+      "default": "state.diff",
+      "title": "Type",
+      "type": "string"
+    },
+    "diff": {
+      "additionalProperties": true,
+      "title": "Diff",
+      "type": "object"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "node_id",
+    "diff",
+    "ts"
+  ],
+  "title": "StateDiffEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "state.diff",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": "model",
+  "diff": {
+    "step": 1,
+    "status": "running"
+  },
   "ts": "2026-05-16T10:00:00.001Z"
 }
 ```
@@ -905,8 +1529,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
 | `params` | `object` | yes |
@@ -915,14 +1542,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "tool.call_started",
       "default": "tool.call_started",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "tool_use_id": {
@@ -960,7 +1623,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "tool.call_started",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "tool_use_id": "toolu_01",
   "tool_name": "read_file",
   "params": {
@@ -974,8 +1640,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
 | `elapsed_ms` | `integer` | yes |
@@ -985,14 +1654,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "tool.call_finished",
       "default": "tool.call_finished",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "tool_use_id": {
@@ -1034,7 +1739,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "tool.call_finished",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "tool_use_id": "toolu_01",
   "tool_name": "read_file",
   "elapsed_ms": 3,
@@ -1046,8 +1754,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
 | `error_class` | `string` | yes |
@@ -1059,14 +1770,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "tool.call_failed",
       "default": "tool.call_failed",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "tool_use_id": {
@@ -1118,7 +1865,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "tool.call_failed",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "tool_use_id": "toolu_02",
   "tool_name": "read_file",
   "error_class": "runtime_error",
@@ -1133,8 +1883,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `model` | `string` | yes |
 | `strategy` | `string` | yes |
 | `ts` | `string` | yes |
@@ -1142,14 +1895,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "llm.model_selected",
       "default": "llm.model_selected",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "model": {
@@ -1181,7 +1970,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "llm.model_selected",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "model": "claude-sonnet-4-6",
   "strategy": "static",
   "ts": "2026-05-16T10:00:00.001Z"
@@ -1192,22 +1984,61 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `token` | `string` | yes |
 | `ts` | `string` | yes |
 
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "llm.token",
       "default": "llm.token",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "token": {
@@ -1234,8 +2065,105 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "llm.token",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "token": "The ",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### LlmReasoningEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `reasoning` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "llm.reasoning",
+      "default": "llm.reasoning",
+      "title": "Type",
+      "type": "string"
+    },
+    "reasoning": {
+      "title": "Reasoning",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "reasoning",
+    "ts"
+  ],
+  "title": "LlmReasoningEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "llm.reasoning",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "reasoning": "Inspect the repository structure first.",
   "ts": "2026-05-16T10:00:00.001Z"
 }
 ```
@@ -1244,8 +2172,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `input_tokens` | `integer` | yes |
 | `output_tokens` | `integer` | yes |
 | `cache_read_input_tokens` | `integer` | yes |
@@ -1256,14 +2187,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "llm.usage",
       "default": "llm.usage",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "input_tokens": {
@@ -1310,7 +2277,10 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "llm.usage",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "input_tokens": 512,
   "output_tokens": 48,
   "cache_read_input_tokens": 490,
@@ -1323,8 +2293,11 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 
 | Field | Type | Required |
 |---|---|---|
-| `type` | `string` | no |
 | `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
 | `level` | `string` | yes |
 | `source` | `string` | yes |
 | `message` | `string` | yes |
@@ -1333,14 +2306,50 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
     "type": {
       "const": "log.line",
       "default": "log.line",
       "title": "Type",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
       "type": "string"
     },
     "level": {
@@ -1377,10 +2386,727 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 ```json
 {
   "type": "log.line",
-  "run_id": "20260516-100000-abc123",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
   "level": "INFO",
   "source": "agent_runtime.core.loop",
   "message": "step 1 started",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### ContextCompactedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string` | yes |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `original_tokens` | `integer` | yes |
+| `summary_tokens` | `integer` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "context.compacted",
+      "default": "context.compacted",
+      "title": "Type",
+      "type": "string"
+    },
+    "original_tokens": {
+      "title": "Original Tokens",
+      "type": "integer"
+    },
+    "summary_tokens": {
+      "title": "Summary Tokens",
+      "type": "integer"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "session_id",
+    "original_tokens",
+    "summary_tokens",
+    "ts"
+  ],
+  "title": "ContextCompactedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "context.compacted",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "original_tokens": 12000,
+  "summary_tokens": 1800,
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+## Permission Events
+
+### PermissionRequestedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string` | yes |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `tool_use_id` | `string` | yes |
+| `tool_name` | `string` | yes |
+| `params` | `object` | yes |
+| `param_preview` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "permission.requested",
+      "default": "permission.requested",
+      "title": "Type",
+      "type": "string"
+    },
+    "tool_use_id": {
+      "title": "Tool Use Id",
+      "type": "string"
+    },
+    "tool_name": {
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "param_preview": {
+      "title": "Param Preview",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "session_id",
+    "tool_use_id",
+    "tool_name",
+    "params",
+    "param_preview",
+    "ts"
+  ],
+  "title": "PermissionRequestedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "permission.requested",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "tool_use_id": "toolu_03",
+  "tool_name": "bash",
+  "params": {
+    "command": "git status --short"
+  },
+  "param_preview": "git status --short",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### PermissionGrantedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `tool_use_id` | `string` | yes |
+| `decision` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "permission.granted",
+      "default": "permission.granted",
+      "title": "Type",
+      "type": "string"
+    },
+    "tool_use_id": {
+      "title": "Tool Use Id",
+      "type": "string"
+    },
+    "decision": {
+      "title": "Decision",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "tool_use_id",
+    "decision",
+    "ts"
+  ],
+  "title": "PermissionGrantedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "permission.granted",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "tool_use_id": "toolu_03",
+  "decision": "allow_once",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### PermissionDeniedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `tool_use_id` | `string` | yes |
+| `decision` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "permission.denied",
+      "default": "permission.denied",
+      "title": "Type",
+      "type": "string"
+    },
+    "tool_use_id": {
+      "title": "Tool Use Id",
+      "type": "string"
+    },
+    "decision": {
+      "title": "Decision",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "tool_use_id",
+    "decision",
+    "ts"
+  ],
+  "title": "PermissionDeniedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "permission.denied",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "tool_use_id": "toolu_04",
+  "decision": "deny_once",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+## Subagent and Skill Events
+
+### SubagentStartedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `parent_run_id` | `string` | yes |
+| `description` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "subagent.started",
+      "default": "subagent.started",
+      "title": "Type",
+      "type": "string"
+    },
+    "parent_run_id": {
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "parent_run_id",
+    "description",
+    "ts"
+  ],
+  "title": "SubagentStartedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "subagent.started",
+  "run_id": "20260516-100001-def4567890abc123def4567890abc123",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "parent_run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "description": "Inspect tests",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### SubagentFinishedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `parent_run_id` | `string` | yes |
+| `status` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "subagent.finished",
+      "default": "subagent.finished",
+      "title": "Type",
+      "type": "string"
+    },
+    "parent_run_id": {
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "parent_run_id",
+    "status",
+    "ts"
+  ],
+  "title": "SubagentFinishedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "subagent.finished",
+  "run_id": "20260516-100001-def4567890abc123def4567890abc123",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "parent_run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "status": "success",
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### SkillInvokedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `type` | `string` | no |
+| `skill_name` | `string` | yes |
+| `arguments` | `string` | yes |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "type": {
+      "const": "skill.invoked",
+      "default": "skill.invoked",
+      "title": "Type",
+      "type": "string"
+    },
+    "skill_name": {
+      "title": "Skill Name",
+      "type": "string"
+    },
+    "arguments": {
+      "title": "Arguments",
+      "type": "string"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "skill_name",
+    "arguments",
+    "ts"
+  ],
+  "title": "SkillInvokedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "skill.invoked",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "skill_name": "review",
+  "arguments": "README.md",
   "ts": "2026-05-16T10:00:00.001Z"
 }
 ```
@@ -1538,7 +3264,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 {
   "type": "session.waiting_for_input",
   "session_id": "sess-abc123def456",
-  "last_run_id": "20260516-100000-abc123",
+  "last_run_id": "20260516-100000-abc123def4567890abc123def4567890",
   "ts": "2026-05-16T10:00:00.001Z"
 }
 ```

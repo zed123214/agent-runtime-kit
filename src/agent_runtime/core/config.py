@@ -4,7 +4,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 
@@ -18,6 +18,8 @@ _DEFAULT_MAX_STEPS = 20
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 _DEFAULT_TRACE_FILE = "~/.agentrt/traces/daemon.jsonl"
 
+type EngineName = Literal["loop", "graph"]
+
 
 @dataclass
 class LoggingConfig:
@@ -29,6 +31,15 @@ class LoggingConfig:
 @dataclass
 class AgentConfig:
     max_steps: int = _DEFAULT_MAX_STEPS
+    engine: EngineName = "loop"
+
+
+@dataclass
+class GraphConfig:
+    recursion_limit: int | None = None
+    tool_call_budget: int = 64
+    wall_time_s: float = 300.0
+    trace_event_limit: int = 64
 
 
 @dataclass
@@ -78,6 +89,7 @@ class RuntimeConfig:
     port: int = _DEFAULT_PORT
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     trace: TraceConfig = field(default_factory=TraceConfig)
     permission: PermissionConfig = field(default_factory=PermissionConfig)
@@ -121,6 +133,7 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
         "core",
         "logging",
         "agent",
+        "graph",
         "llm",
         "trace",
         "permission",
@@ -166,7 +179,7 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
         agent = data["agent"]
         if not isinstance(agent, dict):
             raise SystemExit("Config error: [agent] must be a table")
-        unknown_agent: set[str] = set(agent.keys()) - {"max_steps"}
+        unknown_agent: set[str] = set(agent.keys()) - {"max_steps", "engine"}
         if unknown_agent:
             raise SystemExit(f"Unknown [agent] keys: {', '.join(sorted(unknown_agent))}")
         if "max_steps" in agent:
@@ -174,6 +187,38 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
             if not isinstance(val, int) or val <= 0:
                 raise SystemExit("Config error: agent.max_steps must be a positive integer")
             config.agent.max_steps = val
+        if "engine" in agent:
+            val = agent["engine"]
+            if not isinstance(val, str) or val not in ("loop", "graph"):
+                raise SystemExit("Config error: agent.engine must be 'loop' or 'graph'")
+            config.agent.engine = cast(EngineName, val)
+
+    if "graph" in data:
+        graph = data["graph"]
+        if not isinstance(graph, dict):
+            raise SystemExit("Config error: [graph] must be a table")
+        unknown_graph: set[str] = set(graph.keys()) - {
+            "recursion_limit",
+            "tool_call_budget",
+            "wall_time_s",
+            "trace_event_limit",
+        }
+        if unknown_graph:
+            raise SystemExit(f"Unknown [graph] keys: {', '.join(sorted(unknown_graph))}")
+
+        for key in ("recursion_limit", "tool_call_budget", "trace_event_limit"):
+            if key not in graph:
+                continue
+            val = graph[key]
+            if isinstance(val, bool) or not isinstance(val, int) or val <= 0:
+                raise SystemExit(f"Config error: graph.{key} must be a positive integer")
+            setattr(config.graph, key, val)
+
+        if "wall_time_s" in graph:
+            val = graph["wall_time_s"]
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or not val > 0:
+                raise SystemExit("Config error: graph.wall_time_s must be a positive number")
+            config.graph.wall_time_s = float(val)
 
     if "llm" in data:
         llm = data["llm"]
@@ -349,6 +394,76 @@ def _apply_env(config: RuntimeConfig) -> None:
             raise SystemExit(
                 f"Config error: AGENTRT_MAX_STEPS must be an integer, got: {max_steps_str!r}"
             )
+
+    engine = os.environ.get("AGENTRT_ENGINE")
+    if engine is not None:
+        if engine not in ("loop", "graph"):
+            raise SystemExit("Config error: AGENTRT_ENGINE must be 'loop' or 'graph'")
+        config.agent.engine = cast(EngineName, engine)
+
+    graph_recursion_limit = os.environ.get("AGENTRT_GRAPH_RECURSION_LIMIT")
+    if graph_recursion_limit is not None:
+        try:
+            recursion_limit_value = int(graph_recursion_limit)
+        except ValueError:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_RECURSION_LIMIT must be an integer, "
+                f"got: {graph_recursion_limit!r}"
+            ) from None
+        if recursion_limit_value <= 0:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_RECURSION_LIMIT must be a positive integer, "
+                f"got: {graph_recursion_limit!r}"
+            )
+        config.graph.recursion_limit = recursion_limit_value
+
+    graph_tool_call_budget = os.environ.get("AGENTRT_GRAPH_TOOL_CALL_BUDGET")
+    if graph_tool_call_budget is not None:
+        try:
+            tool_call_budget_value = int(graph_tool_call_budget)
+        except ValueError:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_TOOL_CALL_BUDGET must be an integer, "
+                f"got: {graph_tool_call_budget!r}"
+            ) from None
+        if tool_call_budget_value <= 0:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_TOOL_CALL_BUDGET must be a positive integer, "
+                f"got: {graph_tool_call_budget!r}"
+            )
+        config.graph.tool_call_budget = tool_call_budget_value
+
+    graph_wall_time = os.environ.get("AGENTRT_GRAPH_WALL_TIME_S")
+    if graph_wall_time is not None:
+        try:
+            wall_time_value = float(graph_wall_time)
+        except ValueError:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_WALL_TIME_S must be a number, "
+                f"got: {graph_wall_time!r}"
+            ) from None
+        if not wall_time_value > 0:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_WALL_TIME_S must be a positive number, "
+                f"got: {graph_wall_time!r}"
+            )
+        config.graph.wall_time_s = wall_time_value
+
+    graph_trace_event_limit = os.environ.get("AGENTRT_GRAPH_TRACE_EVENT_LIMIT")
+    if graph_trace_event_limit is not None:
+        try:
+            trace_event_limit_value = int(graph_trace_event_limit)
+        except ValueError:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_TRACE_EVENT_LIMIT must be an integer, "
+                f"got: {graph_trace_event_limit!r}"
+            ) from None
+        if trace_event_limit_value <= 0:
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_TRACE_EVENT_LIMIT must be a positive integer, "
+                f"got: {graph_trace_event_limit!r}"
+            )
+        config.graph.trace_event_limit = trace_event_limit_value
 
     default_model = os.environ.get("AGENTRT_LLM_DEFAULT_MODEL")
     if default_model is not None:

@@ -9,20 +9,97 @@ clients that send JSON-RPC commands and subscribe to event streams.
 1. A client sends a command through JSON-RPC 2.0 over NDJSON TCP.
 2. The daemon validates the request and routes it to a handler.
 3. `SessionManager` records user input and creates a run.
-4. `AgentRunner` assembles provider, tools, permissions, events, and context.
-5. `AgentLoop` runs the plan-act-observe cycle until success or failure.
-6. `EventBus` publishes facts to JSONL files and subscribed clients.
+4. `AgentRunner` assembles provider, tools, permissions, events, and the canonical
+   `ExecutionContext`.
+5. The configured `ExecutionEngine` runs that context. The default
+   `LoopExecutionEngine` delegates to `AgentLoop`; the optional
+   `GraphExecutionEngine` schedules explicit `model` and `kit_tools` nodes.
+6. A run-scoped `EventBus` adds stable correlation metadata, writes only that
+   run's JSONL file, and forwards events to daemon subscribers.
+
+## Execution Engine Boundary
+
+`agent.engine` (or `AGENTRT_ENGINE`) selects `loop` or `graph`; the default is
+`loop`, so existing CLI, TUI, daemon, and Quick Start commands need no new
+argument or dependency. Selecting `graph` lazily loads the optional P1 engine;
+when the Graph extra is absent, the runner produces a typed
+`engine_unavailable` outcome and terminal event before provider startup.
+
+An engine receives the existing `ExecutionContext`, `ToolRegistry`, `EventBus`,
+and run-scoped options. It updates that exact context in place and returns the
+equivalent `RunOutcome`, which keeps terminal events and session persistence on
+one canonical state object.
+
+| Operation | Loop engine | Graph engine |
+| --- | --- | --- |
+| `run` | Delegates to `AgentLoop` | Runs `START -> model <-> kit_tools -> END` |
+| `resume` | Typed `resume_unsupported` | Typed `resume_unsupported`; P1 checkpoints are process-local conversation state |
+| `cancel` | Cancels the active loop task | Cancels model, tool, or permission waits and propagates to the runner |
+
+This remains an internal engine contract: P1 adds no user-callable `run.cancel`
+IPC command and no persistent run-resume behavior.
+
+## Graph State and Lifecycle
+
+LangGraph owns orchestration only. Nodes keep using KitAgent's provider, native
+message dictionaries, tool registry, permission manager, event bus, and
+`invoke_tool()` governance path. RuntimeState contains only JSON-compatible
+messages, pending calls, bounded results/errors/trace metadata, counts, and
+terminal fields; runtime handles never enter checkpoints.
+
+`SessionStore.thread.jsonl` remains the transcript authority. The process-local
+`InMemorySaver` is a cache: a first run seeds the full transcript, an exact
+checkpoint prefix receives only the new suffix, and a mismatch deletes and
+reseeds the thread. This preserves repeated real messages without content-based
+deduplication.
+
+One lazily initialized `GraphRuntime` belongs to each `CoreApp` and is shared by
+the per-message runners created by that app. Chat sessions map
+`thread_id=session_id` and retain state until close; one-shot and direct runs map
+`thread_id=run_id` and delete it at the terminal boundary. Disconnect and
+shutdown cancel and await work before clearing owned threads. Separate app
+instances never share saver state. See [Optional LangGraph Engine](graph-engine.md)
+for the full reconciliation, budget, and cleanup contracts.
+
+## Run Event Contract
+
+Existing wire event type names and field meanings remain intact. Run-scoped
+events now share optional `correlation_id`, `session_id`, and `node_id` fields.
+For root runs, `correlation_id` is the root `run_id`; child-agent events inherit
+it, session-backed runs propagate their session ID, and the loop engine leaves
+`node_id` unset. Separate runs use scoped buses, and every `EventWriter` filters
+on its owning `run_id`, so a child event may still be forwarded to the parent
+bus for live CLI/TUI observation without being written into the parent's JSONL.
+Each direct subagent JSONL is self-describing: it starts with
+`subagent.started`, contains that child's loop events, and ends with
+`subagent.finished`. The same lifecycle and loop events are bridged to the
+parent stream for live observation without contaminating the parent JSONL.
+
+`llm.token` remains the content stream, existing `tool.call_*` events remain the
+tool lifecycle, and `run.finished` is the terminal event for runs managed by
+`AgentRunner`; its status is restricted to `success` or `failed`. Direct
+subagents use `subagent.finished` as their persisted terminal lifecycle event.
+The Graph engine publishes matched `node.started`/`node.finished` events and a
+bounded, content-free `state.diff` after a node returns normally. The runner
+still owns the single run terminal event. The loop engine does not synthesize
+Graph node or state-diff events.
 
 ## Why Daemon First
 
-The daemon owns execution state, so a CLI or TUI disconnect does not need to
-cancel an in-flight task. This also makes multi-client observability possible:
-one client can trigger work while another subscribes to the same run or session.
+The daemon owns execution state and binds each live session to the connection
+that created it. Live run, model, tool, permission, and session events are
+delivered only to that owner. Disconnecting cancels the connection's pending
+approvals, root work, and background subagents so execution cannot continue
+without an approving client. A reconnect may use a new strong run ID to replay
+read-only history, but it does not reattach the live session or transfer its
+command and approval authority.
 
 ## Key Modules
 
 - `core/app.py`: daemon lifecycle and command registration.
 - `core/runner.py`: run assembly and dependency wiring.
+- `core/engine/`: execution protocol, loop adapter, and lazy engine router.
+- `core/graph/`: P1 state graph, nodes, event bridge, and app-scoped runtime.
 - `core/loop.py`: LLM/tool execution loop.
 - `core/bus/`: typed command, event, and JSON-RPC envelope models.
 - `core/transport/`: socket server, socket client, and event broadcasting.

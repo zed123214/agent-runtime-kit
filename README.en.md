@@ -46,9 +46,15 @@ graph TD
     subgraph Runtime["Agent Runtime"]
         Core --> Session["SessionManager\nthread.jsonl / notes.md"]
         Core --> Runner["AgentRunner"]
-        Runner --> Loop["AgentLoop\nplan-act-observe"]
+        Runner --> Engine["ExecutionEngine\nloop default / graph optional"]
+        Engine --> LoopEngine["LoopExecutionEngine"]
+        Engine --> GraphEngine["GraphExecutionEngine\nStateGraph orchestration"]
+        LoopEngine --> Loop["AgentLoop\nplan-act-observe"]
+        GraphEngine --> Graph["model ↔ kit_tools"]
         Loop --> LLM["LLM Provider\nstreaming + usage"]
         Loop --> Registry["ToolRegistry"]
+        Graph --> LLM
+        Graph --> Registry
         Registry --> Permission["PermissionManager"]
         Registry --> Builtins["Built-in tools\nread/write/list/bash/task"]
         Registry --> MCP["MCP tools"]
@@ -68,16 +74,18 @@ graph TD
 
 ## Core Capabilities
 
-1. **Daemon + CLI/TUI clients**: long-running agent execution is decoupled from
-   frontend lifecycle. CLI/TUI clients can disconnect while the daemon keeps the
-   runtime state.
+1. **Daemon + CLI/TUI clients**: the daemon centrally manages session,
+   execution, and event state. Live sessions are bound to their creating
+   connection; disconnects cancel in-flight work, while persisted events remain
+   available for read-only replay through a strong random run ID.
 2. **Typed IPC**: requests, responses, errors, and events are modeled with
    Pydantic and exposed through JSON-RPC 2.0 over NDJSON TCP.
 3. **Generated protocol docs**: `WIRE_PROTOCOL.md` is generated from source
    protocol models so documentation does not drift from code.
-4. **ReAct-style AgentLoop**: the runtime handles streaming LLM output,
-   `tool_use`, validated tool execution, `tool_result` injection, max-step
-   limits, cancellation, and failure recovery.
+4. **Pluggable execution engines**: `AgentRunner` uses the typed
+   `ExecutionEngine` boundary. The default loop preserves existing behavior;
+   the optional Graph engine schedules an explicit `model <-> kit_tools` graph
+   while reusing the provider, tools, permissions, events, and SessionStore.
 5. **ToolRegistry + PermissionManager**: built-in tools and MCP tools share
    schema validation, permission checks, event emission, and structured results.
 6. **Session memory**: full message history is stored in `thread.jsonl`, while
@@ -134,6 +142,7 @@ AGENTRT_LOG_FORMAT=text
 # ANTHROPIC_API_KEY=sk-ant-your-key-here
 # AGENTRT_LLM_DEFAULT_MODEL=claude-sonnet-4-6
 # AGENTRT_MAX_STEPS=20
+# AGENTRT_ENGINE=loop
 ```
 
 Never commit a real API key. Keep local secrets in `.env` or your shell
@@ -148,15 +157,41 @@ uv run agentrt run --goal "Inspect this repository and summarize the project str
 uv run agentrt-tui
 ```
 
+### Optional LangGraph engine (P1)
+
+The original Quick Start remains on `loop` and installs no Graph dependency.
+LangGraph owns explicit orchestration only; KitAgent continues to own providers,
+native messages, tool and permission governance, events, SessionStore, and the
+runner's single terminal boundary. Enable it in PowerShell:
+
+```powershell
+uv sync --extra graph
+$env:AGENTRT_ENGINE = 'graph'
+uv run agentrt-core
+```
+
+Connect from a second PowerShell window:
+
+```powershell
+$env:AGENTRT_ENGINE = 'graph'
+uv run agentrt chat
+```
+
+Graph P1 uses process-local `InMemorySaver` state to continue one Session and
+isolate threads; `thread.jsonl` remains authoritative. It does not provide
+daemon-restart recovery, external resume, interrupt/HITL, or time travel. See
+[Optional LangGraph Engine](docs/graph-engine.md) for configuration, four
+budgets, cleanup lifecycle, and the offline demo.
+
 ## Event Stream Example
 
 ```json
-{"type":"run.started","run_id":"20260629-101500-a1b2c3","goal":"...","ts":"..."}
-{"type":"llm.token","run_id":"20260629-101500-a1b2c3","token":"I","ts":"..."}
-{"type":"tool.started","run_id":"20260629-101500-a1b2c3","tool_name":"list_dir","ts":"..."}
-{"type":"permission.requested","run_id":"20260629-101500-a1b2c3","tool_name":"bash","ts":"..."}
-{"type":"tool.finished","run_id":"20260629-101500-a1b2c3","tool_name":"list_dir","is_error":false,"ts":"..."}
-{"type":"run.finished","run_id":"20260629-101500-a1b2c3","status":"success","ts":"..."}
+{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"goal":"...","ts":"..."}
+{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"token":"I","ts":"..."}
+{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
+{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
+{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
+{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
 ```
 
 ## Repository Map
@@ -170,11 +205,13 @@ agent-runtime-kit/
 |-- docs/
 |   |-- architecture.md
 |   |-- agent-loop.md
+|   |-- graph-engine.md
 |   |-- tool-permissions.md
 |   |-- session-memory.md
 |   |-- skills-subagents-mcp.md
 |   `-- project-highlights.md
 |-- examples/
+|   |-- graph_offline_demo.py
 |   |-- basic_run/
 |   |-- permissions/
 |   |   `-- trace_permission_flow.py
@@ -188,6 +225,11 @@ agent-runtime-kit/
 |   |-- tui/
 |   `-- core/
 |       |-- app.py
+|       |-- engine/
+|       |   |-- base.py
+|       |   |-- loop_engine.py
+|       |   `-- router.py
+|       |-- graph/
 |       |-- runner.py
 |       |-- loop.py
 |       |-- bus/
@@ -207,12 +249,23 @@ agent-runtime-kit/
 
 ## Development
 
+The base install excludes LangGraph. It supports the base checks and tests that
+are neither Graph-specific nor online integration tests:
+
 ```bash
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
+uv run pytest tests/ -m "not graph and not integration" -v
+uv run python scripts/check_wire_protocol.py --check
+```
+
+The full source type check includes the optional Graph modules, so install the
+Graph extra first:
+
+```bash
+uv sync --extra graph
 uv run mypy src
 uv run pytest tests/ -v
-uv run python scripts/check_wire_protocol.py --check
 ```
 
 On native Windows, if `uv` script entry points fail with a trampoline path
@@ -233,6 +286,7 @@ uv run python scripts/generate_wire_protocol.py
 
 - [Architecture](docs/architecture.md)
 - [Agent Loop](docs/agent-loop.md)
+- [Optional LangGraph Engine](docs/graph-engine.md)
 - [Tool Permissions](docs/tool-permissions.md)
 - [Session Memory](docs/session-memory.md)
 - [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)

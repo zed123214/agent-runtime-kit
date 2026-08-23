@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from rich.markdown import Markdown
+from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -22,6 +23,22 @@ from agent_runtime.core.transport.socket_client import IpcError, SocketClient
 
 log = logging.getLogger(__name__)
 
+_SAFE_CHANGED_FIELDS = frozenset(
+    {
+        "errors",
+        "final_answer",
+        "messages",
+        "pending_tool_action",
+        "pending_tool_calls",
+        "reason",
+        "status",
+        "step",
+        "tool_call_count",
+        "tool_results",
+        "trace_events",
+    }
+)
+
 
 def _preview(s: str, n: int) -> str:
     return s[:n] + "…" if len(s) > n else s
@@ -29,6 +46,70 @@ def _preview(s: str, n: int) -> str:
 
 def _params_str(params: dict[str, Any]) -> str:
     return json.dumps(params, ensure_ascii=False, indent=2)
+
+
+def _safe_event_code(value: object, limit: int = 48) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = " ".join(value.split())
+    return cleaned[:limit]
+
+
+def _first_diff_int(diff: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = diff.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _state_diff_summary(value: object) -> str:
+    """Format a bounded whitelist of Graph state metadata for the TUI."""
+
+    if not isinstance(value, dict):
+        return "updated"
+
+    diff: dict[str, Any] = value
+    parts: list[str] = []
+    changed_value = diff.get("changed_fields")
+    if isinstance(changed_value, list):
+        changed = [
+            item for item in changed_value if isinstance(item, str) and item in _SAFE_CHANGED_FIELDS
+        ][:8]
+        if changed:
+            parts.append("changed=" + ",".join(changed))
+
+    before = _first_diff_int(diff, "message_count_before", "messages_before")
+    after = _first_diff_int(diff, "message_count_after", "messages_after")
+    if before is not None and after is not None:
+        parts.append(f"messages={before}->{after}")
+    else:
+        delta = _first_diff_int(diff, "message_count_delta")
+        count = _first_diff_int(diff, "message_count")
+        if delta is not None:
+            parts.append(f"messages+={delta}")
+        elif count is not None:
+            parts.append(f"messages={count}")
+
+    for key, label in (
+        ("step", "step"),
+        ("tool_call_count", "tools"),
+        ("pending_tool_call_count", "pending"),
+        ("tool_result_count", "results"),
+        ("error_count", "errors"),
+        ("errors_count", "errors"),
+        ("trace_event_count", "trace"),
+    ):
+        count = _first_diff_int(diff, key)
+        if count is not None and not any(part.startswith(f"{label}=") for part in parts):
+            parts.append(f"{label}={count}")
+
+    for key in ("status", "reason"):
+        code = _safe_event_code(diff.get(key))
+        if code:
+            parts.append(f"{key}={code}")
+
+    return " ".join(parts) if parts else "updated"
 
 
 # 从工具参数中提取最适合摘要展示的关键字段
@@ -797,6 +878,8 @@ class AgentTuiApp(App[None]):
                     "topics": [
                         "session.*",
                         "run.*",
+                        "node.*",
+                        "state.diff",
                         "step.*",
                         "tool.*",
                         "llm.token",
@@ -939,6 +1022,35 @@ class AgentTuiApp(App[None]):
                         classes="log-line",
                     )
                 )
+
+        elif t == "node.started":
+            node_id = escape(_safe_event_code(event.get("node_id")) or "unknown")
+            self._append(
+                Static(
+                    f"[dim]node[/dim] [cyan]{node_id}[/cyan] [dim]started[/dim]",
+                    classes="log-line",
+                )
+            )
+
+        elif t == "node.finished":
+            node_id = escape(_safe_event_code(event.get("node_id")) or "unknown")
+            status = escape(_safe_event_code(event.get("status")) or "unknown")
+            self._append(
+                Static(
+                    f"[dim]node[/dim] [cyan]{node_id}[/cyan] [dim]{status}[/dim]",
+                    classes="log-line",
+                )
+            )
+
+        elif t == "state.diff":
+            node_id = escape(_safe_event_code(event.get("node_id")) or "unknown")
+            summary = escape(_state_diff_summary(event.get("diff")))
+            self._append(
+                Static(
+                    f"[dim]state {node_id}[/dim] [dim]{summary}[/dim]",
+                    classes="log-line",
+                )
+            )
 
         elif t == "step.started":
             run_id = event.get("run_id", "")

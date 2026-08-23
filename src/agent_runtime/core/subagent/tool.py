@@ -127,13 +127,10 @@ class SpawnAgentTool(BaseTool):
             system_prompt_override=profile.system_prompt if profile else None,
         )
 
-        child_bus = EventBus()
-
-        # 将子 bus 所有事件桥接到父 bus，TUI 据此渲染嵌套进度
-        async def _bridge(event: BaseModel) -> None:
-            await self._parent_bus.publish(event)
-
-        child_bus.subscribe(_bridge)
+        child_bus = EventBus(
+            correlation_id=self._parent_bus.correlation_id or self._parent_run_id,
+            session_id=self._session_id or None,
+        )
 
         child_registry = self._build_child_registry(child_bus, child_run_id, profile)
         child_loop = AgentLoop(
@@ -144,25 +141,32 @@ class SpawnAgentTool(BaseTool):
             session_id=self._session_id,
         )
 
-        await self._parent_bus.publish(
-            SubagentStartedEvent(
-                run_id=child_run_id,
-                parent_run_id=self._parent_run_id,
-                description=p.description,
-                ts=_now(),
-            )
-        )
-
         child_run_path = self._runs_dir / child_run_id
         child_run_path.mkdir(parents=True, exist_ok=True)
 
         if p.run_in_background:
+            started_ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
             task: asyncio.Task[None] = asyncio.create_task(
-                self._run_background(
-                    child_loop, child_context, child_bus, child_run_path, child_run_id
+                self._run_child(
+                    child_loop,
+                    child_context,
+                    child_bus,
+                    child_run_path,
+                    child_run_id,
+                    p.description,
+                    started_ready=started_ready,
                 )
             )
             self._task_registry.register(child_run_id, task, child_context)
+            try:
+                # Preserve the existing observable ordering: started is durable and
+                # bridged before the background spawn tool returns its run ID.
+                await started_ready
+            except BaseException:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
             return ToolResult(
                 content=(
                     f"Subagent started in background. run_id={child_run_id}. "
@@ -170,17 +174,13 @@ class SpawnAgentTool(BaseTool):
                 )
             )
 
-        async with EventWriter(child_run_path / "events.jsonl") as writer:
-            writer.subscribe(child_bus)
-            await child_loop.run(child_context)
-
-        await self._parent_bus.publish(
-            SubagentFinishedEvent(
-                run_id=child_run_id,
-                parent_run_id=self._parent_run_id,
-                status=child_context.status,
-                ts=_now(),
-            )
+        await self._run_child(
+            child_loop,
+            child_context,
+            child_bus,
+            child_run_path,
+            child_run_id,
+            p.description,
         )
 
         if child_context.status == "success":
@@ -196,26 +196,71 @@ class SpawnAgentTool(BaseTool):
             error_type="runtime_error",
         )
 
-    # 后台任务协程：写事件文件，运行 loop，发布完成事件
-    async def _run_background(
+    # 前后台共用子 run 边界：生命周期先落盘，再桥接到父 bus
+    async def _run_child(
         self,
         loop: AgentLoop,
         context: ExecutionContext,
         bus: EventBus,
         run_path: Path,
         run_id: str,
+        description: str,
+        *,
+        started_ready: asyncio.Future[None] | None = None,
     ) -> None:
-        async with EventWriter(run_path / "events.jsonl") as writer:
+        async def _bridge(event: BaseModel) -> None:
+            await self._parent_bus.publish(event)
+
+        async with EventWriter(run_path / "events.jsonl", run_id=run_id) as writer:
+            # EventBus publishes in subscription order. Persist first so a live
+            # transport failure cannot erase the child's replayable history.
             writer.subscribe(bus)
-            await loop.run(context)
-        await self._parent_bus.publish(
-            SubagentFinishedEvent(
+            bus.subscribe(_bridge)
+
+            started = SubagentStartedEvent(
                 run_id=run_id,
+                correlation_id=self._parent_bus.correlation_id or self._parent_run_id,
+                session_id=self._session_id or None,
                 parent_run_id=self._parent_run_id,
-                status=context.status,
+                description=description,
                 ts=_now(),
             )
-        )
+            try:
+                await bus.publish(started)
+                if started_ready is not None and not started_ready.done():
+                    started_ready.set_result(None)
+                await loop.run(context)
+            except asyncio.CancelledError as exc:
+                context.mark_failed("cancelled")
+                if started_ready is not None and not started_ready.done():
+                    started_ready.set_exception(exc)
+                raise
+            except Exception as exc:
+                # An exception that escapes AgentLoop is a failed child run even
+                # if the context was marked successful immediately beforehand.
+                context.mark_failed("subagent_error")
+                if started_ready is not None and not started_ready.done():
+                    started_ready.set_exception(exc)
+                raise
+            finally:
+                if not context.is_done():
+                    context.mark_failed("subagent_error")
+                finished = SubagentFinishedEvent(
+                    run_id=run_id,
+                    correlation_id=self._parent_bus.correlation_id or self._parent_run_id,
+                    session_id=self._session_id or None,
+                    parent_run_id=self._parent_run_id,
+                    status=context.status,
+                    ts=_now(),
+                )
+                finish_task = asyncio.create_task(bus.publish(finished))
+                try:
+                    await asyncio.shield(finish_task)
+                except asyncio.CancelledError:
+                    # Keep the writer open until the terminal event is durable,
+                    # then preserve cancellation for the background registry.
+                    await finish_task
+                    raise
 
     # 构造子 registry；基于角色配置过滤工具，深度允许时注册嵌套 SpawnAgentTool
     def _build_child_registry(

@@ -13,10 +13,14 @@ from agent_runtime.core.bus.commands import (
     AgentRunResult,
     EventSubscribeCommand,
     EventSubscribeResult,
+    PermissionRespondCommand,
+    PermissionRespondResult,
     PingCommand,
     PongResult,
     SessionCloseCommand,
     SessionCloseResult,
+    SessionCompactCommand,
+    SessionCompactResult,
     SessionCreateCommand,
     SessionCreateResult,
     SessionGetHistoryCommand,
@@ -26,11 +30,18 @@ from agent_runtime.core.bus.commands import (
 )
 from agent_runtime.core.bus.envelope import EventPushEnvelope
 from agent_runtime.core.bus.events import (
+    ContextCompactedEvent,
     CoreStartedEvent,
     LlmModelSelectedEvent,
+    LlmReasoningEvent,
     LlmTokenEvent,
     LlmUsageEvent,
     LogLineEvent,
+    NodeFinishedEvent,
+    NodeStartedEvent,
+    PermissionDeniedEvent,
+    PermissionGrantedEvent,
+    PermissionRequestedEvent,
     RunFinishedEvent,
     RunStartedEvent,
     SessionClosedEvent,
@@ -38,8 +49,12 @@ from agent_runtime.core.bus.events import (
     SessionMessageReceivedEvent,
     SessionResumedEvent,
     SessionWaitingForInputEvent,
+    SkillInvokedEvent,
+    StateDiffEvent,
     StepFinishedEvent,
     StepStartedEvent,
+    SubagentFinishedEvent,
+    SubagentStartedEvent,
     ToolCallFailedEvent,
     ToolCallFinishedEvent,
     ToolCallStartedEvent,
@@ -73,9 +88,32 @@ def _model_section(name: str, model: type, example: dict | None = None) -> str: 
     return f"### {name}\n{table}{schema_block}{example_block}"
 
 
+def _run_event_example(
+    event_type: str,
+    run_id: str,
+    ts: str,
+    *,
+    correlation_id: str | None = None,
+    session_id: str | None = None,
+    node_id: str | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    """Build an example with the additive run-correlation metadata."""
+
+    return {
+        "type": event_type,
+        "run_id": run_id,
+        "correlation_id": correlation_id or run_id,
+        "session_id": session_id,
+        "node_id": node_id,
+        **fields,
+        "ts": ts,
+    }
+
+
 # 生成完整的 WIRE_PROTOCOL.md 文档字符串
 def generate() -> str:
-    run_id = "20260516-100000-abc123"
+    run_id = "20260516-100000-abc123def4567890abc123def4567890"
     ts = "2026-05-16T10:00:00.001Z"
 
     ping_req_example = {
@@ -142,14 +180,37 @@ def generate() -> str:
         "id": "u-5",
         "result": {"run_id": run_id},
     }
+    permission_respond_req_example = {
+        "jsonrpc": "2.0",
+        "id": "u-6",
+        "method": "permission.respond",
+        "params": {"tool_use_id": "toolu_03", "decision": "allow_once"},
+    }
+    permission_respond_resp_example = {
+        "jsonrpc": "2.0",
+        "id": "u-6",
+        "result": {"ok": True},
+    }
+    session_compact_req_example = {
+        "jsonrpc": "2.0",
+        "id": "u-7",
+        "method": "session.compact",
+        "params": {"session_id": session_id, "focus": "保留当前任务和工具结果"},
+    }
+    session_compact_resp_example = {
+        "jsonrpc": "2.0",
+        "id": "u-7",
+        "result": {"summary_tokens": 1800, "saved_tokens": 10200},
+    }
     event_push_example = {
         "kind": "event",
-        "event": {
-            "type": "step.started",
-            "run_id": run_id,
-            "step": 1,
-            "ts": ts,
-        },
+        "event": _run_event_example(
+            "step.started",
+            run_id,
+            ts,
+            session_id=session_id,
+            step=1,
+        ),
     }
 
     sections = [
@@ -192,6 +253,30 @@ def generate() -> str:
         _model_section("SessionCloseCommand", SessionCloseCommand),
         "\n",
         _model_section("SessionCloseResult", SessionCloseResult),
+        "\n",
+        _model_section(
+            "PermissionRespondCommand",
+            PermissionRespondCommand,
+            permission_respond_req_example,
+        ),
+        "\n",
+        _model_section(
+            "PermissionRespondResult",
+            PermissionRespondResult,
+            permission_respond_resp_example,
+        ),
+        "\n",
+        _model_section(
+            "SessionCompactCommand",
+            SessionCompactCommand,
+            session_compact_req_example,
+        ),
+        "\n",
+        _model_section(
+            "SessionCompactResult",
+            SessionCompactResult,
+            session_compact_resp_example,
+        ),
         "\n## Server Push\n\n",
         "Events pushed from daemon to subscribed clients over the same TCP connection.\n\n",
         _model_section("EventPushEnvelope", EventPushEnvelope, event_push_example),
@@ -199,123 +284,306 @@ def generate() -> str:
         "Events sent over the IPC socket (daemon → client).\n\n",
         _model_section("CoreStartedEvent", CoreStartedEvent),
         "\n## Run Events\n\n",
-        "Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients.\n\n",
+        "Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients. "
+        "Run-scoped payloads preserve their existing `type` and fields while adding optional "
+        "`correlation_id`, `session_id`, and `node_id` metadata. `correlation_id` identifies the "
+        "root run across child runs, `session_id` is populated only when a session exists, and "
+        "`node_id` is populated only for a real engine node. Older payloads without these fields "
+        "remain valid.\n\n",
+        "`llm.reasoning`, `node.*`, and `state.diff` are typed boundaries reserved for engines "
+        "that produce those facts. The default loop engine does not synthesize them.\n\n",
         _model_section(
             "RunStartedEvent",
             RunStartedEvent,
-            {"type": "run.started", "run_id": run_id, "goal": "总结 README.md", "ts": ts},
+            _run_event_example(
+                "run.started",
+                run_id,
+                ts,
+                session_id=session_id,
+                goal="总结 README.md",
+            ),
         ),
         "\n",
         _model_section(
             "RunFinishedEvent",
             RunFinishedEvent,
-            {
-                "type": "run.finished",
-                "run_id": run_id,
-                "status": "success",
-                "reason": None,
-                "steps": 2,
-                "ts": ts,
-            },
+            _run_event_example(
+                "run.finished",
+                run_id,
+                ts,
+                session_id=session_id,
+                status="success",
+                reason=None,
+                steps=2,
+            ),
         ),
         "\n",
         _model_section(
             "StepStartedEvent",
             StepStartedEvent,
-            {"type": "step.started", "run_id": run_id, "step": 1, "ts": ts},
+            _run_event_example(
+                "step.started",
+                run_id,
+                ts,
+                session_id=session_id,
+                step=1,
+            ),
         ),
         "\n",
         _model_section(
             "StepFinishedEvent",
             StepFinishedEvent,
-            {"type": "step.finished", "run_id": run_id, "step": 1, "ts": ts},
+            _run_event_example(
+                "step.finished",
+                run_id,
+                ts,
+                session_id=session_id,
+                step=1,
+            ),
+        ),
+        "\n",
+        _model_section(
+            "NodeStartedEvent",
+            NodeStartedEvent,
+            _run_event_example(
+                "node.started",
+                run_id,
+                ts,
+                session_id=session_id,
+                node_id="model",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "NodeFinishedEvent",
+            NodeFinishedEvent,
+            _run_event_example(
+                "node.finished",
+                run_id,
+                ts,
+                session_id=session_id,
+                node_id="model",
+                status="success",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "StateDiffEvent",
+            StateDiffEvent,
+            _run_event_example(
+                "state.diff",
+                run_id,
+                ts,
+                session_id=session_id,
+                node_id="model",
+                diff={"step": 1, "status": "running"},
+            ),
         ),
         "\n",
         _model_section(
             "ToolCallStartedEvent",
             ToolCallStartedEvent,
-            {
-                "type": "tool.call_started",
-                "run_id": run_id,
-                "tool_use_id": "toolu_01",
-                "tool_name": "read_file",
-                "params": {"path": "README.md"},
-                "ts": ts,
-            },
+            _run_event_example(
+                "tool.call_started",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_01",
+                tool_name="read_file",
+                params={"path": "README.md"},
+            ),
         ),
         "\n",
         _model_section(
             "ToolCallFinishedEvent",
             ToolCallFinishedEvent,
-            {
-                "type": "tool.call_finished",
-                "run_id": run_id,
-                "tool_use_id": "toolu_01",
-                "tool_name": "read_file",
-                "elapsed_ms": 3,
-                "ts": ts,
-            },
+            _run_event_example(
+                "tool.call_finished",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_01",
+                tool_name="read_file",
+                elapsed_ms=3,
+            ),
         ),
         "\n",
         _model_section(
             "ToolCallFailedEvent",
             ToolCallFailedEvent,
-            {
-                "type": "tool.call_failed",
-                "run_id": run_id,
-                "tool_use_id": "toolu_02",
-                "tool_name": "read_file",
-                "error_class": "runtime_error",
-                "error_message": "file not found",
-                "elapsed_ms": 1,
-                "attempt": 1,
-                "ts": ts,
-            },
+            _run_event_example(
+                "tool.call_failed",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_02",
+                tool_name="read_file",
+                error_class="runtime_error",
+                error_message="file not found",
+                elapsed_ms=1,
+                attempt=1,
+            ),
         ),
         "\n",
         _model_section(
             "LlmModelSelectedEvent",
             LlmModelSelectedEvent,
-            {
-                "type": "llm.model_selected",
-                "run_id": run_id,
-                "model": "claude-sonnet-4-6",
-                "strategy": "static",
-                "ts": ts,
-            },
+            _run_event_example(
+                "llm.model_selected",
+                run_id,
+                ts,
+                session_id=session_id,
+                model="claude-sonnet-4-6",
+                strategy="static",
+            ),
         ),
         "\n",
         _model_section(
             "LlmTokenEvent",
             LlmTokenEvent,
-            {"type": "llm.token", "run_id": run_id, "token": "The ", "ts": ts},
+            _run_event_example(
+                "llm.token",
+                run_id,
+                ts,
+                session_id=session_id,
+                token="The ",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "LlmReasoningEvent",
+            LlmReasoningEvent,
+            _run_event_example(
+                "llm.reasoning",
+                run_id,
+                ts,
+                session_id=session_id,
+                reasoning="Inspect the repository structure first.",
+            ),
         ),
         "\n",
         _model_section(
             "LlmUsageEvent",
             LlmUsageEvent,
-            {
-                "type": "llm.usage",
-                "run_id": run_id,
-                "input_tokens": 512,
-                "output_tokens": 48,
-                "cache_read_input_tokens": 490,
-                "cache_creation_input_tokens": 0,
-                "ts": ts,
-            },
+            _run_event_example(
+                "llm.usage",
+                run_id,
+                ts,
+                session_id=session_id,
+                input_tokens=512,
+                output_tokens=48,
+                cache_read_input_tokens=490,
+                cache_creation_input_tokens=0,
+            ),
         ),
         "\n",
         _model_section(
             "LogLineEvent",
             LogLineEvent,
-            {
-                "type": "log.line",
-                "run_id": run_id,
-                "level": "INFO",
-                "source": "agent_runtime.core.loop",
-                "message": "step 1 started",
-                "ts": ts,
-            },
+            _run_event_example(
+                "log.line",
+                run_id,
+                ts,
+                session_id=session_id,
+                level="INFO",
+                source="agent_runtime.core.loop",
+                message="step 1 started",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "ContextCompactedEvent",
+            ContextCompactedEvent,
+            _run_event_example(
+                "context.compacted",
+                run_id,
+                ts,
+                session_id=session_id,
+                original_tokens=12000,
+                summary_tokens=1800,
+            ),
+        ),
+        "\n## Permission Events\n\n",
+        _model_section(
+            "PermissionRequestedEvent",
+            PermissionRequestedEvent,
+            _run_event_example(
+                "permission.requested",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_03",
+                tool_name="bash",
+                params={"command": "git status --short"},
+                param_preview="git status --short",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "PermissionGrantedEvent",
+            PermissionGrantedEvent,
+            _run_event_example(
+                "permission.granted",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_03",
+                decision="allow_once",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "PermissionDeniedEvent",
+            PermissionDeniedEvent,
+            _run_event_example(
+                "permission.denied",
+                run_id,
+                ts,
+                session_id=session_id,
+                tool_use_id="toolu_04",
+                decision="deny_once",
+            ),
+        ),
+        "\n## Subagent and Skill Events\n\n",
+        _model_section(
+            "SubagentStartedEvent",
+            SubagentStartedEvent,
+            _run_event_example(
+                "subagent.started",
+                "20260516-100001-def4567890abc123def4567890abc123",
+                ts,
+                correlation_id=run_id,
+                session_id=session_id,
+                parent_run_id=run_id,
+                description="Inspect tests",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "SubagentFinishedEvent",
+            SubagentFinishedEvent,
+            _run_event_example(
+                "subagent.finished",
+                "20260516-100001-def4567890abc123def4567890abc123",
+                ts,
+                correlation_id=run_id,
+                session_id=session_id,
+                parent_run_id=run_id,
+                status="success",
+            ),
+        ),
+        "\n",
+        _model_section(
+            "SkillInvokedEvent",
+            SkillInvokedEvent,
+            _run_event_example(
+                "skill.invoked",
+                run_id,
+                ts,
+                session_id=session_id,
+                skill_name="review",
+                arguments="README.md",
+            ),
         ),
         "\n## Session Events\n\n",
         _model_section(

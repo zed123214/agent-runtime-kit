@@ -107,7 +107,11 @@ async def test_permission_allow_once_tool_executes(tmp_path: Path) -> None:
         t = getattr(e, "type", "")
         event_types.append(t)
         if t == "permission.requested":
-            manager.respond(getattr(e, "tool_use_id", ""), "allow_once")
+            manager.respond(
+                getattr(e, "tool_use_id", ""),
+                "allow_once",
+                authorized_session_ids={getattr(e, "session_id", "")},
+            )
 
     bus.subscribe(collect)
     outcome = await _runner(_SingleBashProvider(), bus, manager, tmp_path).run_and_capture(
@@ -133,7 +137,11 @@ async def test_permission_deny_once_tool_not_executed(tmp_path: Path) -> None:
         t = getattr(e, "type", "")
         event_types.append(t)
         if t == "permission.requested":
-            manager.respond(getattr(e, "tool_use_id", ""), "deny_once")
+            manager.respond(
+                getattr(e, "tool_use_id", ""),
+                "deny_once",
+                authorized_session_ids={getattr(e, "session_id", "")},
+            )
         if t == "tool.call_failed":
             failed_events.append(e)
 
@@ -158,7 +166,11 @@ async def test_always_allow_cached_within_session(tmp_path: Path) -> None:
         nonlocal perm_requested_count
         if getattr(e, "type", "") == "permission.requested":
             perm_requested_count += 1
-            manager.respond(getattr(e, "tool_use_id", ""), "always_allow")
+            manager.respond(
+                getattr(e, "tool_use_id", ""),
+                "always_allow",
+                authorized_session_ids={getattr(e, "session_id", "")},
+            )
 
     bus.subscribe(collect)
     outcome = await _runner(_TwoBashProvider(), bus, manager, tmp_path).run_and_capture(

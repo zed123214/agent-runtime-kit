@@ -26,3 +26,11 @@ class BackgroundTaskRegistry:
     # 返回所有已注册的 (task, context) 对，用于 daemon 退出时批量清理
     def all(self) -> list[tuple[asyncio.Task[None], ExecutionContext]]:
         return list(self._tasks.values())
+
+    # 根 run 结束或取消时终止仍在运行的后台子 Agent，并等待其终态事件落盘
+    async def cancel_all(self) -> None:
+        tasks = [task for task, _context in self._tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

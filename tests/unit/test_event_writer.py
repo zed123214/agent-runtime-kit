@@ -74,6 +74,21 @@ async def test_event_writer_subscribe_via_bus(tmp_path: Path) -> None:
     assert json.loads(lines[0])["run_id"] == "r1"
 
 
+async def test_event_writer_can_filter_bridged_events_by_run_id(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    bus = EventBus()
+
+    async with EventWriter(path, run_id="parent") as writer:
+        writer.subscribe(bus)
+        await bus.publish(
+            RunStartedEvent(run_id="parent", goal="parent", ts="2026-05-11T00:00:00Z")
+        )
+        await bus.publish(RunStartedEvent(run_id="child", goal="child", ts="2026-05-11T00:00:01Z"))
+
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [event["run_id"] for event in events] == ["parent"]
+
+
 # 功能：验证文件未通过 async with 打开时 handle 静默返回、不抛异常
 # 设计：直接实例化 writer（跳过 async with），调用 handle 后不断言文件存在，以"不引发异常"为唯一判据；对应 EventWriter 的防御性设计
 async def test_event_writer_handle_when_not_open_is_noop(tmp_path: Path) -> None:

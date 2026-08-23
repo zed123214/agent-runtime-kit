@@ -4,6 +4,21 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Discriminator
 
+from agent_runtime.core.context import TerminalStatus
+
+
+class RunEvent(BaseModel):
+    """Common metadata for run-scoped events.
+
+    Existing event type names and payload fields remain unchanged. The optional
+    metadata is filled by a run-scoped EventBus when the lifecycle provides it.
+    """
+
+    run_id: str
+    correlation_id: str | None = None
+    session_id: str | None = None
+    node_id: str | None = None
+
 
 class CoreStartedEvent(BaseModel):
     type: Literal["core.started"] = "core.started"
@@ -11,48 +26,63 @@ class CoreStartedEvent(BaseModel):
     version: str
 
 
-class RunStartedEvent(BaseModel):
+class RunStartedEvent(RunEvent):
     type: Literal["run.started"] = "run.started"
-    run_id: str
     goal: str
     ts: str  # ISO 8601
 
 
-class RunFinishedEvent(BaseModel):
+class RunFinishedEvent(RunEvent):
     type: Literal["run.finished"] = "run.finished"
-    run_id: str
-    status: str  # "success" | "failed"
+    status: TerminalStatus
     reason: str | None = None  # "exceeded_max_steps" | "cancelled" | "llm_error" | ...
     steps: int
+    error: dict[str, Any] | None = None
     ts: str
 
 
-class StepStartedEvent(BaseModel):
+class StepStartedEvent(RunEvent):
     type: Literal["step.started"] = "step.started"
-    run_id: str
     step: int
     ts: str
 
 
-class StepFinishedEvent(BaseModel):
+class StepFinishedEvent(RunEvent):
     type: Literal["step.finished"] = "step.finished"
-    run_id: str
     step: int
     ts: str
 
 
-class ToolCallStartedEvent(BaseModel):
+class NodeStartedEvent(RunEvent):
+    type: Literal["node.started"] = "node.started"
+    node_id: str
+    ts: str
+
+
+class NodeFinishedEvent(RunEvent):
+    type: Literal["node.finished"] = "node.finished"
+    node_id: str
+    status: str
+    ts: str
+
+
+class StateDiffEvent(RunEvent):
+    type: Literal["state.diff"] = "state.diff"
+    node_id: str
+    diff: dict[str, Any]
+    ts: str
+
+
+class ToolCallStartedEvent(RunEvent):
     type: Literal["tool.call_started"] = "tool.call_started"
-    run_id: str
     tool_use_id: str
     tool_name: str
     params: dict[str, Any]
     ts: str
 
 
-class ToolCallFinishedEvent(BaseModel):
+class ToolCallFinishedEvent(RunEvent):
     type: Literal["tool.call_finished"] = "tool.call_finished"
-    run_id: str
     tool_use_id: str
     tool_name: str
     elapsed_ms: int
@@ -60,9 +90,8 @@ class ToolCallFinishedEvent(BaseModel):
     ts: str
 
 
-class ToolCallFailedEvent(BaseModel):
+class ToolCallFailedEvent(RunEvent):
     type: Literal["tool.call_failed"] = "tool.call_failed"
-    run_id: str
     tool_use_id: str
     tool_name: str
     # "runtime_error" | "timeout" | "schema_error" | "permission_denied" | "rate_limited"
@@ -73,16 +102,20 @@ class ToolCallFailedEvent(BaseModel):
     ts: str
 
 
-class LlmTokenEvent(BaseModel):
+class LlmTokenEvent(RunEvent):
     type: Literal["llm.token"] = "llm.token"
-    run_id: str
     token: str
     ts: str
 
 
-class LlmUsageEvent(BaseModel):
+class LlmReasoningEvent(RunEvent):
+    type: Literal["llm.reasoning"] = "llm.reasoning"
+    reasoning: str
+    ts: str
+
+
+class LlmUsageEvent(RunEvent):
     type: Literal["llm.usage"] = "llm.usage"
-    run_id: str
     input_tokens: int
     output_tokens: int
     cache_read_input_tokens: int
@@ -91,17 +124,15 @@ class LlmUsageEvent(BaseModel):
     ts: str
 
 
-class LlmModelSelectedEvent(BaseModel):
+class LlmModelSelectedEvent(RunEvent):
     type: Literal["llm.model_selected"] = "llm.model_selected"
-    run_id: str
     model: str
     strategy: str  # "static" | "rule_based" | "cost_budget"
     ts: str
 
 
-class LogLineEvent(BaseModel):
+class LogLineEvent(RunEvent):
     type: Literal["log.line"] = "log.line"
-    run_id: str
     level: str  # "DEBUG" | "INFO" | "WARNING" | "ERROR"
     source: str
     message: str
@@ -141,18 +172,16 @@ class SessionClosedEvent(BaseModel):
     ts: str
 
 
-class ContextCompactedEvent(BaseModel):
+class ContextCompactedEvent(RunEvent):
     type: Literal["context.compacted"] = "context.compacted"
     session_id: str
-    run_id: str
     original_tokens: int
     summary_tokens: int
     ts: str
 
 
-class PermissionRequestedEvent(BaseModel):
+class PermissionRequestedEvent(RunEvent):
     type: Literal["permission.requested"] = "permission.requested"
-    run_id: str
     tool_use_id: str
     tool_name: str
     params: dict[str, Any]
@@ -161,45 +190,40 @@ class PermissionRequestedEvent(BaseModel):
     ts: str
 
 
-class PermissionGrantedEvent(BaseModel):
+class PermissionGrantedEvent(RunEvent):
     type: Literal["permission.granted"] = "permission.granted"
-    run_id: str
     tool_use_id: str
     # "allow_once" | "always_allow" | "auto_allow"
     decision: str
     ts: str
 
 
-class PermissionDeniedEvent(BaseModel):
+class PermissionDeniedEvent(RunEvent):
     type: Literal["permission.denied"] = "permission.denied"
-    run_id: str
     tool_use_id: str
     # "deny_once" | "always_deny" | "auto_deny"
     decision: str
     ts: str
 
 
-class SubagentStartedEvent(BaseModel):
+class SubagentStartedEvent(RunEvent):
     type: Literal["subagent.started"] = "subagent.started"
-    run_id: str  # 子 agent run_id
     parent_run_id: str
     description: str
     ts: str
 
 
-class SubagentFinishedEvent(BaseModel):
+class SubagentFinishedEvent(RunEvent):
     type: Literal["subagent.finished"] = "subagent.finished"
-    run_id: str
     parent_run_id: str
     status: str  # "success" | "failed"
     ts: str
 
 
-class SkillInvokedEvent(BaseModel):
+class SkillInvokedEvent(RunEvent):
     type: Literal["skill.invoked"] = "skill.invoked"
     skill_name: str
     arguments: str
-    run_id: str
     ts: str
 
 
@@ -210,10 +234,14 @@ Event = Annotated[
     | RunFinishedEvent
     | StepStartedEvent
     | StepFinishedEvent
+    | NodeStartedEvent
+    | NodeFinishedEvent
+    | StateDiffEvent
     | ToolCallStartedEvent
     | ToolCallFinishedEvent
     | ToolCallFailedEvent
     | LlmTokenEvent
+    | LlmReasoningEvent
     | LlmUsageEvent
     | LlmModelSelectedEvent
     | LogLineEvent
