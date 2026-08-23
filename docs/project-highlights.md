@@ -17,8 +17,8 @@ system.
 1. **Daemon-first runtime**
 
    `agentrt-core` owns execution state, while `agentrt` and `agentrt-tui` are
-   thin clients. This separates frontend lifecycle from agent execution and
-   allows clients to reconnect to existing runs.
+   thin clients. Live sessions are owner-scoped, and persisted run history can
+   be replayed read-only after reconnect through a strong random run ID.
 
 2. **Typed protocol boundary**
 
@@ -41,8 +41,8 @@ system.
 5. **Replayable observability**
 
    Agent execution is represented as append-only events. Events are written to
-   JSONL and pushed to subscribed clients, so disconnected clients can replay
-   historical events before receiving live updates.
+   per-run JSONL files and pushed to the owning client; strong run IDs support
+   read-only historical replay after reconnect.
 
 6. **Session memory and context governance**
 
@@ -62,8 +62,8 @@ system.
   clients, JSON-RPC 2.0 over NDJSON TCP, and Pydantic-typed protocol models.
 - Implemented a ReAct-style LLM/tool execution loop with schema validation,
   tool-result injection, cancellation, max-step limits, and failure recovery.
-- Designed runtime-level tool permissions with event-driven approval flow and
-  replayable JSONL event logs for multi-client observability.
+- Designed runtime-level tool permissions with owner-scoped approval flow and
+  replayable per-run JSONL event logs.
 - Implemented persistent session memory, curated notes, context compaction, and
   a unified extension model for skills, subagents, and MCP tools.
 

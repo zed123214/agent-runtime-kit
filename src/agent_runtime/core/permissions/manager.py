@@ -4,7 +4,7 @@ import asyncio
 import datetime
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
@@ -43,8 +43,8 @@ class PermissionManager:
         timeout_s: float = 60.0,
     ) -> None:
         self._policies: dict[str, ToolPolicy] = policies or dict(DEFAULT_POLICIES)
-        # tool_use_id → pending Future + metadata
-        self._pending: dict[str, _PendingRequest] = {}
+        # (session_id, tool_use_id) → pending Future + metadata
+        self._pending: dict[tuple[str, str], _PendingRequest] = {}
         # (session_id, tool_name) → "allow" | "deny"（session 内存，重启丢失）
         self._session_always: dict[tuple[str, str], str] = {}
         # tool_name → "allow" | "deny"（持久化，从 policy_file 加载）
@@ -115,47 +115,77 @@ class PermissionManager:
             # default == ASK（bash、unknown tool）→ fall through to Future
 
         # ASK 路径（来自 OUTSIDE_CWD 强制 ASK，或 default=ASK）
+        pending_key = (session_id, tool_use_id)
+        if pending_key in self._pending:
+            logger.warning(
+                "permission: duplicate pending session_id=%s tool_use_id=%s",
+                session_id,
+                tool_use_id,
+            )
+            return False, "duplicate_tool_use_id"
         loop = asyncio.get_event_loop()
         future: asyncio.Future[str] = loop.create_future()
-        self._pending[tool_use_id] = _PendingRequest(
+        request = _PendingRequest(
             future=future,
             session_id=session_id,
             tool_name=tool_name,
         )
-
-        await event_emitter(
-            {
-                "type": "permission.requested",
-                "tool_use_id": tool_use_id,
-                "tool_name": tool_name,
-                "params": params,
-                "param_preview": param_preview(tool_name, params),
-                "session_id": session_id,
-                "ts": _now(),
-            }
-        )
+        self._pending[pending_key] = request
 
         try:
+            await event_emitter(
+                {
+                    "type": "permission.requested",
+                    "tool_use_id": tool_use_id,
+                    "tool_name": tool_name,
+                    "params": params,
+                    "param_preview": param_preview(tool_name, params),
+                    "session_id": session_id,
+                    "ts": _now(),
+                }
+            )
             if self._timeout_s > 0:
                 raw = await asyncio.wait_for(future, timeout=self._timeout_s)
             else:
                 raw = await future
         except TimeoutError:
-            self._pending.pop(tool_use_id, None)
             logger.info("permission: timeout tool_use_id=%s tool=%s", tool_use_id, tool_name)
             return False, "timeout"
+        finally:
+            if self._pending.get(pending_key) is request:
+                self._pending.pop(pending_key, None)
 
         allowed = self._apply_response(raw, session_id, tool_name)
         return allowed, raw
 
-    # 处理客户端返回的审批决策，resolve 对应 Future
-    def respond(self, tool_use_id: str, decision: str) -> None:
-        req = self._pending.pop(tool_use_id, None)
-        if req is None:
+    # 仅当挂起请求属于调用连接拥有的 session 时，resolve 对应 Future
+    def respond(
+        self,
+        tool_use_id: str,
+        decision: str,
+        *,
+        authorized_session_ids: Collection[str],
+    ) -> bool:
+        matching_keys = [key for key in self._pending if key[1] == tool_use_id]
+        if not matching_keys:
             logger.warning("permission.respond: unknown tool_use_id=%s", tool_use_id)
-            return
+            return False
+        authorized_keys = [key for key in matching_keys if key[0] in authorized_session_ids]
+        if not authorized_keys:
+            logger.warning("permission.respond: request is not owned by this connection")
+            return False
+        if len(authorized_keys) > 1:
+            logger.warning(
+                "permission.respond: ambiguous tool_use_id=%s across authorized sessions",
+                tool_use_id,
+            )
+            return False
+        pending_key = authorized_keys[0]
+        req = self._pending.pop(pending_key)
         if not req.future.done():
             req.future.set_result(decision)
+            return True
+        return False
 
     # 应用审批决策，更新 session + persistent 缓存，返回是否放行
     def _apply_response(self, decision: str, session_id: str, tool_name: str) -> bool:
@@ -202,9 +232,13 @@ class PermissionManager:
 
     # 客户端断连时拒绝该 session 所有待审批请求，防止 Future 永久挂起
     def cancel_session(self, session_id: str, reason: str = "client_disconnected") -> None:
-        to_cancel = [uid for uid, req in self._pending.items() if req.session_id == session_id]
-        for uid in to_cancel:
-            req = self._pending.pop(uid)
+        to_cancel = [key for key, req in self._pending.items() if req.session_id == session_id]
+        for key in to_cancel:
+            req = self._pending.pop(key)
             if not req.future.done():
-                logger.debug("permission: cancel pending tool_use_id=%s reason=%s", uid, reason)
+                logger.debug(
+                    "permission: cancel pending tool_use_id=%s reason=%s",
+                    key[1],
+                    reason,
+                )
                 req.future.set_result("deny_once")

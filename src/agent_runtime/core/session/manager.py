@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -44,18 +44,26 @@ class SessionManager:
         bus: EventBus,
         provider: LLMProvider | None = None,
         provider_factory: Callable[[], LLMProvider] | None = None,
+        on_session_closed: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._runner_factory = runner_factory
         self._bus = bus
         self._provider = provider
         self._provider_factory = provider_factory
+        self._on_session_closed = on_session_closed
         self._sessions: dict[str, Session] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._skill_loader = SkillLoader()
 
-    # 创建新 session 并写入 meta.json
-    async def create(self, mode: SessionMode, title: str = "") -> Session:
+    # 创建新 session；transport 可在发布 session.created 前原子登记 owner
+    async def create(
+        self,
+        mode: SessionMode,
+        title: str = "",
+        *,
+        before_publish: Callable[[Session], None] | None = None,
+    ) -> Session:
         sid = f"sess-{uuid.uuid4().hex[:12]}"
         ts = _now()
         session = Session(
@@ -67,6 +75,8 @@ class SessionManager:
             updated_at=ts,
             run_ids=[],
         )
+        if before_publish is not None:
+            before_publish(session)
         self._sessions[sid] = session
         self._locks[sid] = asyncio.Lock()
         self._store.write_meta(session)
@@ -118,6 +128,8 @@ class SessionManager:
                             skill_name=skill_name,
                             arguments=arguments,
                             run_id=run_id,
+                            correlation_id=run_id,
+                            session_id=sid,
                             ts=_now(),
                         )
                     )
@@ -133,6 +145,7 @@ class SessionManager:
             )
 
             session.updated_at = _now()
+            session_closed = session.mode == "one_shot"
             if session.mode == "one_shot":
                 session.status = "closed"
                 await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
@@ -146,6 +159,8 @@ class SessionManager:
                     )
                 )
             self._store.write_meta(session)
+            if session_closed and self._on_session_closed is not None:
+                await self._on_session_closed(sid)
             return run_id
 
     # 关闭指定 session 并更新 meta.json
@@ -159,6 +174,8 @@ class SessionManager:
             session.updated_at = _now()
             self._store.write_meta(session)
             await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
+            if self._on_session_closed is not None:
+                await self._on_session_closed(sid)
 
     # 手动压缩指定 session 的 thread，将摘要持久化写入 thread.jsonl
     async def compact(self, sid: str, focus: str = "") -> Any:

@@ -44,10 +44,9 @@ async def test_agent_run_returns_run_id_and_emits_started(
         await client.close()
 
 
-# 功能：验证两个独立客户端同时订阅后，其中一个触发 agent.run，两个都能收到 run.started 广播
-# 设计：两个 SocketClient 并行等待事件（asyncio.gather），确认 IpcEventBroadcaster 的扇出语义；
-#       不需要两个客户端都发命令，只验证广播覆盖所有订阅者
-async def test_two_clients_both_receive_broadcast(
+# 功能：验证两个独立客户端同时订阅后，仅 session owner 收到 run.started
+# 设计：client1 触发 agent.run；client2 即使 global 订阅也不能观察 run goal 或生命周期
+async def test_two_clients_isolate_session_run_events(
     running_daemon: subprocess.Popen[bytes],
     free_port: int,
 ) -> None:
@@ -78,10 +77,13 @@ async def test_two_clients_both_receive_broadcast(
         await client2.send_command("event.subscribe", {"topics": ["run.*"], "scope": "global"})
         await client1.send_command("agent.run", {"goal": "broadcast test"})
 
-        await asyncio.wait_for(
-            asyncio.gather(event1.wait(), event2.wait()),
-            timeout=5.0,
-        )
+        await asyncio.wait_for(event1.wait(), timeout=5.0)
+        try:
+            await asyncio.wait_for(event2.wait(), timeout=0.2)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("non-owner received another session's run event")
     finally:
         loop1.cancel()
         loop2.cancel()

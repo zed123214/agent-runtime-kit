@@ -55,6 +55,49 @@ async def test_create_session_writes_meta_and_event(tmp_path: Path) -> None:
     assert [e.type for e in events] == ["session.created"]  # type: ignore[attr-defined]
 
 
+async def test_create_runs_owner_callback_before_session_created(tmp_path: Path) -> None:
+    order: list[str] = []
+    bus = EventBus()
+
+    async def collect(event: object) -> None:
+        order.append(event.type)  # type: ignore[attr-defined]
+
+    bus.subscribe(collect)
+    manager = SessionManager(
+        SessionStore(tmp_path),
+        lambda: _Runner(),  # type: ignore[arg-type]
+        bus,
+    )
+
+    session = await manager.create(
+        "chat",
+        before_publish=lambda created: order.append(f"bound:{created.id}"),
+    )
+
+    assert order == [f"bound:{session.id}", "session.created"]
+
+
+async def test_create_aborts_before_persistence_when_owner_binding_fails(tmp_path: Path) -> None:
+    events: list[object] = []
+    bus = EventBus()
+
+    async def collect(event: object) -> None:
+        events.append(event)
+
+    bus.subscribe(collect)
+    store = SessionStore(tmp_path)
+    manager = SessionManager(store, lambda: _Runner(), bus)  # type: ignore[arg-type]
+
+    def reject(_session: Session) -> None:
+        raise HandlerError(SESSION_NOT_FOUND, "session not found")
+
+    with pytest.raises(HandlerError):
+        await manager.create("chat", before_publish=reject)
+
+    assert events == []
+    assert list(tmp_path.iterdir()) == []
+
+
 # 功能：验证 provider_factory 在非 compact 操作中不会被提前调用
 # 设计：factory 直接抛错，create/get_history 正常完成即可证明 daemon 可无 API key 启动
 async def test_provider_factory_is_lazy_for_non_llm_session_ops(tmp_path: Path) -> None:
@@ -92,6 +135,33 @@ async def test_send_message_chat_enters_waiting_and_writes_thread(tmp_path: Path
     assert messages[1]["role"] == "assistant"
 
 
+async def test_skill_event_carries_run_correlation_and_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    skill_dir = tmp_path / ".agentrt" / "skills"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "demo.md").write_text("Handle $ARGUMENTS", encoding="utf-8")
+
+    events: list[object] = []
+    bus = EventBus()
+
+    async def collect(event: object) -> None:
+        events.append(event)
+
+    bus.subscribe(collect)
+    store = SessionStore(tmp_path / "sessions")
+    manager = SessionManager(store, lambda: _Runner(), bus)  # type: ignore[arg-type]
+    session = await manager.create("chat")
+
+    run_id = await manager.send_message(session.id, "/demo value")
+
+    invoked = next(e for e in events if e.type == "skill.invoked")  # type: ignore[attr-defined]
+    assert invoked.run_id == run_id  # type: ignore[attr-defined]
+    assert invoked.correlation_id == run_id  # type: ignore[attr-defined]
+    assert invoked.session_id == session.id  # type: ignore[attr-defined]
+
+
 # 功能：验证 one_shot session 在单次消息完成后自动 closed
 # 设计：复用 mock runner 的成功路径，聚焦 mode 对最终状态的影响，保证 agentrt run 的统一路径正确
 async def test_one_shot_auto_closes(tmp_path: Path) -> None:
@@ -101,6 +171,54 @@ async def test_one_shot_auto_closes(tmp_path: Path) -> None:
 
     await manager.send_message(session.id, "hello")
 
+    assert store.read_meta(session.id).status == "closed"
+
+
+async def test_one_shot_close_callback_runs_under_session_lock(tmp_path: Path) -> None:
+    observed: list[tuple[str, bool]] = []
+    manager_ref: list[SessionManager] = []
+
+    async def on_closed(session_id: str) -> None:
+        manager = manager_ref[0]
+        observed.append((session_id, manager._locks[session_id].locked()))
+
+    store = SessionStore(tmp_path)
+    manager = SessionManager(
+        store,
+        lambda: _Runner(),  # type: ignore[arg-type]
+        EventBus(),
+        on_session_closed=on_closed,
+    )
+    manager_ref.append(manager)
+    session = await manager.create("one_shot")
+
+    await manager.send_message(session.id, "hello")
+
+    assert observed == [(session.id, True)]
+    assert store.read_meta(session.id).status == "closed"
+
+
+async def test_explicit_close_callback_runs_under_session_lock(tmp_path: Path) -> None:
+    observed: list[tuple[str, bool]] = []
+    manager_ref: list[SessionManager] = []
+
+    async def on_closed(session_id: str) -> None:
+        manager = manager_ref[0]
+        observed.append((session_id, manager._locks[session_id].locked()))
+
+    store = SessionStore(tmp_path)
+    manager = SessionManager(
+        store,
+        lambda: _Runner(),  # type: ignore[arg-type]
+        EventBus(),
+        on_session_closed=on_closed,
+    )
+    manager_ref.append(manager)
+    session = await manager.create("chat")
+
+    await manager.close(session.id)
+
+    assert observed == [(session.id, True)]
     assert store.read_meta(session.id).status == "closed"
 
 

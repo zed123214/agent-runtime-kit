@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from agent_runtime.cli.commands.chat import ChatPrinter
 from agent_runtime.cli.commands.run import StdoutPrinter
 
 
@@ -23,6 +24,67 @@ async def test_step_started_prints_step_number(capsys: pytest.CaptureFixture[str
     out = capsys.readouterr().out
     assert "[step 3]" in out
     assert "planning" in out
+
+
+async def test_stdout_graph_events_show_only_safe_state_summary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    printer = StdoutPrinter()
+    await printer.handle({"type": "node.started", "node_id": "model"})
+    await printer.handle(
+        {
+            "type": "state.diff",
+            "node_id": "model",
+            "diff": {
+                "changed_fields": ["messages", "step", "private_payload"],
+                "message_count_before": 2,
+                "message_count_after": 3,
+                "step": 1,
+                "tool_call_count": 0,
+                "status": "running",
+                "messages": [{"content": "secret user text"}],
+                "private_payload": "sk-live-secret",
+            },
+        }
+    )
+    await printer.handle({"type": "node.finished", "node_id": "model", "status": "success"})
+
+    out = capsys.readouterr().out
+    assert "[node model] started" in out
+    assert "[node model] success" in out
+    assert "changed=messages,step" in out
+    assert "messages=2->3" in out
+    assert "step=1" in out
+    assert "secret user text" not in out
+    assert "sk-live-secret" not in out
+    assert "private_payload" not in out
+
+
+async def test_chat_graph_state_summary_is_sanitized(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    printer = ChatPrinter()
+    await printer.handle(
+        {
+            "type": "state.diff",
+            "node_id": "kit_tools",
+            "diff": {
+                "changed_fields": ["tool_call_count", "tool_results"],
+                "message_count_delta": 1,
+                "tool_call_count": 2,
+                "error_count": 1,
+                "tool_results": [{"content": "sensitive output"}],
+            },
+        }
+    )
+
+    out = capsys.readouterr().out
+    assert "[state kit_tools]" in out
+    assert "changed=tool_call_count,tool_results" in out
+    assert "messages+=1" in out
+    assert "tools=2" in out
+    assert "errors=1" in out
+    assert "sensitive output" not in out
 
 
 # 功能：验证 llm.token 事件将 token 无换行打印并设置 _inline 标志
@@ -75,3 +137,54 @@ async def test_run_finished_prints_status_and_steps(capsys: pytest.CaptureFixtur
     out = capsys.readouterr().out
     assert "success" in out
     assert "4" in out
+
+
+async def test_run_finished_prints_structured_engine_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    printer = StdoutPrinter()
+    await printer.handle(
+        {
+            "type": "run.finished",
+            "run_id": "r",
+            "status": "failed",
+            "reason": "engine_unavailable",
+            "steps": 0,
+            "error": {
+                "code": "engine_unavailable",
+                "engine": "graph",
+                "message": "graph engine is unavailable",
+            },
+            "ts": "t",
+        }
+    )
+    captured = capsys.readouterr()
+    assert "reason=engine_unavailable" in captured.out
+    assert "graph engine is unavailable" in captured.err
+
+
+async def test_chat_printer_shows_structured_engine_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    printer = ChatPrinter()
+
+    await printer.handle(
+        {
+            "type": "run.finished",
+            "run_id": "r",
+            "status": "failed",
+            "reason": "engine_unavailable",
+            "steps": 0,
+            "error": {
+                "code": "engine_unavailable",
+                "engine": "graph",
+                "message": "graph engine is unavailable",
+            },
+            "ts": "t",
+        }
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "engine_unavailable" in captured.err
+    assert "graph engine is unavailable" in captured.err

@@ -59,3 +59,61 @@ async def test_session_create_history_close_over_ipc(
 
     writer.close()
     await writer.wait_closed()
+
+
+async def test_two_clients_cannot_operate_on_each_others_session(
+    running_daemon: subprocess.Popen[bytes],
+    free_port: int,
+) -> None:
+    owner_reader, owner_writer = await asyncio.open_connection("127.0.0.1", free_port)
+    other_reader, other_writer = await asyncio.open_connection("127.0.0.1", free_port)
+
+    try:
+        created = await _send_recv(
+            owner_reader,
+            owner_writer,
+            "session.create",
+            {"mode": "chat", "title": "private"},
+            req_id="create-private",
+        )
+        session_id = created["result"]["session_id"]
+
+        attacks = [
+            ("session.get_history", {"session_id": session_id}),
+            ("session.send_message", {"session_id": session_id, "content": "steal"}),
+            ("session.close", {"session_id": session_id}),
+            ("session.compact", {"session_id": session_id, "focus": "steal"}),
+        ]
+        for index, (method, params) in enumerate(attacks):
+            response = await _send_recv(
+                other_reader,
+                other_writer,
+                method,
+                params,
+                req_id=f"attack-{index}",
+            )
+            assert response["error"]["code"] == -32010
+            assert response["error"]["message"] == "session not found"
+
+        missing = await _send_recv(
+            other_reader,
+            other_writer,
+            "session.get_history",
+            {"session_id": "missing"},
+            req_id="missing",
+        )
+        assert missing["error"] == response["error"]
+
+        owner_history = await _send_recv(
+            owner_reader,
+            owner_writer,
+            "session.get_history",
+            {"session_id": session_id},
+            req_id="owner-history",
+        )
+        assert owner_history["result"]["messages"] == []
+    finally:
+        owner_writer.close()
+        other_writer.close()
+        await asyncio.wait_for(owner_writer.wait_closed(), timeout=2.0)
+        await asyncio.wait_for(other_writer.wait_closed(), timeout=2.0)

@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_runtime.core.bus.events import RunFinishedEvent, RunStartedEvent
 from agent_runtime.core.compact.compactor import Compactor
 from agent_runtime.core.config import RuntimeConfig
-from agent_runtime.core.context import ExecutionContext
+from agent_runtime.core.context import ExecutionContext, TerminalStatus
+from agent_runtime.core.engine.base import (
+    EngineErrorDetail,
+    EngineRunConfig,
+    ExecutionEngineConfigurationError,
+    ExecutionEngineContractError,
+    ExecutionEngineError,
+    RunOutcome,
+)
+from agent_runtime.core.engine.router import EngineResolver, EngineRouter
 from agent_runtime.core.events.bus import EventBus, EventHandler
 from agent_runtime.core.events.writer import EventWriter
 from agent_runtime.core.llm.base import LLMProvider
 from agent_runtime.core.llm.provider import AnthropicProvider
-from agent_runtime.core.loop import AgentLoop
 from agent_runtime.core.mcp.server import McpServerManager
 from agent_runtime.core.memory.loader import load_context_file
 from agent_runtime.core.permissions.manager import PermissionManager
@@ -39,16 +46,19 @@ from agent_runtime.core.tools.registry import ToolRegistry
 from agent_runtime.core.trace.provider import TracingProvider
 from agent_runtime.core.trace.writer import TraceWriter
 
+__all__ = ["AgentRunner", "RunOutcome"]
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-@dataclass
-class RunOutcome:
-    status: str
-    result: str
-    reason: str | None
+def _terminal_status(status: str) -> TerminalStatus | None:
+    if status == "success":
+        return "success"
+    if status == "failed":
+        return "failed"
+    return None
 
 
 class AgentRunner:
@@ -64,6 +74,7 @@ class AgentRunner:
         trace: TraceWriter | None = None,
         permission_manager: PermissionManager | None = None,
         mcp_manager: McpServerManager | None = None,
+        engine_resolver: EngineResolver | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -73,6 +84,7 @@ class AgentRunner:
         self._trace = trace
         self._permission_manager = permission_manager
         self._mcp_manager = mcp_manager
+        self._engine_resolver = engine_resolver if engine_resolver is not None else EngineRouter()
         # 跨 run 共享的后台 subagent 任务注册表
         self._task_registry = BackgroundTaskRegistry()
 
@@ -166,9 +178,14 @@ class AgentRunner:
 
         task_manager = TaskManager(run_path / ".tasks")
 
-        bus = self._bus if self._bus is not None else EventBus()
-        for h in self._extra_handlers:
-            bus.subscribe(h)
+        session_id_str = session.id if session is not None else ""
+        # Each run gets immutable correlation metadata and its own subscriber
+        # list. Forwarding preserves the existing daemon-wide EventBus API while
+        # keeping concurrent run event files and metadata isolated.
+        bus = EventBus(
+            correlation_id=run_id,
+            session_id=session_id_str or None,
+        )
 
         context = ExecutionContext(
             run_id=run_id,
@@ -182,12 +199,39 @@ class AgentRunner:
         )
         prefill_len = len(history)
 
-        async with EventWriter(run_path / "events.jsonl") as writer:
+        async with EventWriter(run_path / "events.jsonl", run_id=run_id) as writer:
+            # Persist the run-scoped event before forwarding it to external/global
+            # subscribers. A slow client must not prevent the authoritative JSONL
+            # log from observing a matched Graph node lifecycle.
             writer.subscribe(bus)
+            if self._bus is not None:
+                bus.subscribe(self._bus.publish)
+            for h in self._extra_handlers:
+                bus.subscribe(h)
             await bus.publish(RunStartedEvent(run_id=run_id, goal=goal, ts=_now()))
 
             cancelled = False
+            engine_outcome: RunOutcome | None = None
+            engine_error: EngineErrorDetail | None = None
+            engine_name: str = self._config.agent.engine
+            engine_invocation_started = False
             try:
+                if (
+                    self._config.agent.engine == "graph"
+                    and self._config.compaction.auto_threshold > 0
+                ):
+                    raise ExecutionEngineConfigurationError(
+                        engine="graph",
+                        message=(
+                            "The graph engine does not support automatic context "
+                            "compaction; set compaction.auto_threshold to 0 and use "
+                            "manual session compaction."
+                        ),
+                    )
+                # Resolve capability before provider construction. Selecting the
+                # optional graph engine therefore yields a typed availability
+                # error even when no Anthropic API key is configured.
+                engine_builder = self._engine_resolver(self._config.agent.engine)
                 provider: LLMProvider = self._provider or AnthropicProvider(
                     self._config.llm.default_model
                 )
@@ -197,7 +241,6 @@ class AgentRunner:
                         self._trace,
                         include_payload=self._config.trace.include_llm_payload,
                     )
-                session_id_str = session.id if session is not None else ""
                 child_runs_dir = (
                     store.runs_dir(session.id)
                     if session is not None and store is not None
@@ -220,41 +263,148 @@ class AgentRunner:
                     else run_path
                 )
                 compactor = Compactor(bus, session_dir, session_id_str)
-                loop = AgentLoop(
+                engine = engine_builder(
                     provider,
-                    registry,
-                    bus,
                     permission_manager=self._permission_manager,
                     compactor=compactor,
-                    compact_threshold=self._config.compaction.auto_threshold,
-                    session_id=session_id_str,
                 )
-                await loop.run(context)
+                engine_name = engine.name
+                engine_invocation_started = True
+                engine_outcome = await engine.run(
+                    context,
+                    tools=registry,
+                    events=bus,
+                    config=EngineRunConfig(
+                        session_id=session_id_str,
+                        thread_id=(
+                            session.id
+                            if session is not None and session.mode == "chat"
+                            else context.run_id
+                        ),
+                        retain_thread=session is not None and session.mode == "chat",
+                        compact_threshold=self._config.compaction.auto_threshold,
+                        recursion_limit=self._config.graph.recursion_limit,
+                        tool_call_budget=self._config.graph.tool_call_budget,
+                        wall_time_s=self._config.graph.wall_time_s,
+                        trace_event_limit=self._config.graph.trace_event_limit,
+                    ),
+                )
+                outcome_status = _terminal_status(engine_outcome.status)
+                context_status = _terminal_status(context.status)
+                if outcome_status is None or context_status is None:
+                    raise ExecutionEngineContractError(
+                        engine=engine.name,
+                        message=(
+                            "Execution engine must finish with status 'success' or "
+                            f"'failed'; got outcome.status={engine_outcome.status!r} "
+                            f"and context.status={context.status!r}."
+                        ),
+                    )
+                if engine_outcome.status == "success" and engine_outcome.error is not None:
+                    raise ExecutionEngineContractError(
+                        engine=engine.name,
+                        message="A successful execution-engine outcome cannot carry an error.",
+                    )
+                canonical_outcome = RunOutcome.from_context(
+                    context,
+                    error=engine_outcome.error,
+                )
+                if engine_outcome != canonical_outcome:
+                    raise ExecutionEngineContractError(
+                        engine=engine.name,
+                        message=(
+                            "Execution engine returned an outcome that does not match "
+                            "the canonical ExecutionContext."
+                        ),
+                    )
+                engine_error = engine_outcome.error
             except asyncio.CancelledError:
                 cancelled = True
-                if not context.is_done():
-                    context.mark_failed("cancelled")
-            except SystemExit:
+                engine_outcome = None
+                engine_error = None
+                context.mark_failed("cancelled")
+            except ExecutionEngineError as exc:
+                engine_outcome = None
+                engine_error = exc.detail
+                logging.getLogger(__name__).error(
+                    "execution engine error run_id=%s engine=%s code=%s: %s",
+                    run_id,
+                    exc.detail.engine,
+                    exc.detail.code,
+                    exc.detail.message,
+                )
+                context.mark_failed(exc.detail.code)
+            except SystemExit as exc:
                 logging.getLogger(__name__).exception(
-                    "agent run failed during startup run_id=%s step=%d",
+                    "agent run failed due to SystemExit run_id=%s step=%d",
                     run_id,
                     context.step,
                 )
-                if not context.is_done():
+                engine_outcome = None
+                if engine_invocation_started:
+                    engine_error = EngineErrorDetail(
+                        code="engine_execution_error",
+                        engine=engine_name,
+                        message=(
+                            f"Execution engine raised SystemExit: {exc}"
+                            if str(exc)
+                            else "Execution engine raised SystemExit."
+                        ),
+                    )
+                    context.mark_failed(engine_error.code)
+                else:
+                    engine_error = None
                     context.mark_failed("llm_error")
-            except Exception:
+            except Exception as exc:
                 logging.getLogger(__name__).exception(
                     "agent run failed run_id=%s step=%d", run_id, context.step
                 )
-                if not context.is_done():
+                engine_outcome = None
+                if engine_invocation_started:
+                    engine_error = EngineErrorDetail(
+                        code="engine_execution_error",
+                        engine=engine_name,
+                        message=f"Execution engine raised {type(exc).__name__}: {exc}",
+                    )
+                    context.mark_failed(engine_error.code)
+                else:
+                    engine_error = None
                     context.mark_failed("llm_error")
+
+            # Background subagents are scoped to this Runner. Once the root run
+            # reaches a terminal boundary there is no reachable agent_result
+            # consumer, so pending children must not outlive cancellation or
+            # continue tool execution after the owning connection disappears.
+            await self._task_registry.cancel_all()
+
+            terminal_status = _terminal_status(context.status)
+            if terminal_status is None:
+                engine_outcome = None
+                engine_error = EngineErrorDetail(
+                    code="engine_contract_error",
+                    engine=engine_name,
+                    message=(
+                        "Execution engine left the canonical ExecutionContext in "
+                        f"non-terminal status {context.status!r}."
+                    ),
+                )
+                logging.getLogger(__name__).error(
+                    "execution engine error run_id=%s engine=%s code=%s: %s",
+                    run_id,
+                    engine_error.engine,
+                    engine_error.code,
+                    engine_error.message,
+                )
+                context.mark_failed(engine_error.code)
+                terminal_status = "failed"
 
             await bus.publish(
                 RunFinishedEvent(
                     run_id=run_id,
-                    status=context.status,
+                    status=terminal_status,
                     reason=context.reason,
                     steps=context.step,
+                    error=engine_error.as_dict() if engine_error is not None else None,
                     ts=_now(),
                 )
             )
@@ -265,8 +415,6 @@ class AgentRunner:
         if cancelled:
             raise asyncio.CancelledError()
 
-        return RunOutcome(
-            status=context.status,
-            result=context.result,
-            reason=context.reason,
-        )
+        if engine_outcome is not None:
+            return engine_outcome
+        return RunOutcome.from_context(context, error=engine_error)

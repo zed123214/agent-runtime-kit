@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+type ExecutionStatus = Literal["running", "success", "failed"]
+type TerminalStatus = Literal["success", "failed"]
 
 
 @dataclass
@@ -15,7 +18,7 @@ class ExecutionContext:
     project_context: str = ""
     messages: list[dict[str, Any]] = field(default_factory=list)
     step: int = 0
-    status: str = "running"  # "running" | "success" | "failed"
+    status: ExecutionStatus = "running"
     reason: str | None = None
     result: str = ""
     # skill 或 subagent 角色可覆盖默认 system prompt

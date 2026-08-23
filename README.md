@@ -35,9 +35,15 @@ graph TD
     subgraph Runtime["Agent Runtime"]
         Core --> Session["SessionManager\nthread.jsonl / notes.md"]
         Core --> Runner["AgentRunner"]
-        Runner --> Loop["AgentLoop\n规划-执行-观察"]
+        Runner --> Engine["ExecutionEngine\nloop 默认 / graph 可选"]
+        Engine --> LoopEngine["LoopExecutionEngine"]
+        Engine --> GraphEngine["GraphExecutionEngine\nStateGraph 编排"]
+        LoopEngine --> Loop["AgentLoop\n规划-执行-观察"]
+        GraphEngine --> Graph["model ↔ kit_tools"]
         Loop --> LLM["LLM Provider\n流式输出 + usage"]
         Loop --> Registry["ToolRegistry"]
+        Graph --> LLM
+        Graph --> Registry
         Registry --> Permission["PermissionManager"]
         Registry --> Builtins["内置工具\nread/write/list/bash/task"]
         Registry --> MCP["MCP tools"]
@@ -57,10 +63,10 @@ graph TD
 
 ## 核心能力
 
-1. **Daemon + CLI/TUI 客户端架构**：将长期运行的 Agent 执行过程与前端生命周期解耦。CLI/TUI 可以断开连接，daemon 继续维护运行状态。
+1. **Daemon + CLI/TUI 客户端架构**：daemon 集中管理会话、执行与事件状态；实时会话与创建连接绑定，断连时取消其在途工作，已持久化事件可凭强随机 Run ID 只读回放。
 2. **类型化 IPC**：使用 Pydantic 建模请求、响应、错误和事件，并通过 JSON-RPC 2.0 over NDJSON TCP 暴露进程间通信协议。
 3. **协议文档自动生成**：`WIRE_PROTOCOL.md` 从源码协议模型生成，降低手写协议文档与代码实现发生漂移的风险。
-4. **ReAct 风格 AgentLoop**：运行时统一处理 LLM 流式输出、`tool_use` 解析、工具参数校验、工具执行、`tool_result` 回注、最大步数限制、取消语义和失败恢复。
+4. **可替换执行引擎**：`AgentRunner` 通过类型化 `ExecutionEngine` 边界运行默认 `loop` 引擎；可选 `graph` 引擎用显式 `model ↔ kit_tools` 状态图调度，同时复用既有模型、工具、权限、事件和 SessionStore 链路。
 5. **ToolRegistry + PermissionManager**：内置工具和 MCP 工具共享 schema 校验、权限判断、事件发布和结构化结果返回机制。
 6. **Session 记忆**：完整消息历史保存到 `thread.jsonl`，经过整理的长期事实保存到 `notes.md`。
 7. **上下文治理**：支持 tool result 截断、context 水位监控，以及用 compact 摘要替换过大的历史上下文。
@@ -113,6 +119,7 @@ AGENTRT_LOG_FORMAT=text
 # ANTHROPIC_API_KEY=sk-ant-your-key-here
 # AGENTRT_LLM_DEFAULT_MODEL=claude-sonnet-4-6
 # AGENTRT_MAX_STEPS=20
+# AGENTRT_ENGINE=loop
 ```
 
 不要提交真实 API Key。请将本地密钥保存在 `.env` 或 shell 环境变量中。
@@ -126,15 +133,39 @@ uv run agentrt run --goal "Inspect this repository and summarize the project str
 uv run agentrt-tui
 ```
 
+### 可选 LangGraph 引擎（P1）
+
+原快速开始保持 `loop` 默认值，不安装 Graph 依赖。Graph 只负责显式编排，
+KitAgent 继续负责 Provider、原生消息、工具与权限治理、事件、SessionStore 和
+Runner 唯一终态。启用方式（PowerShell）：
+
+```powershell
+uv sync --extra graph
+$env:AGENTRT_ENGINE = 'graph'
+uv run agentrt-core
+```
+
+在第二个 PowerShell 窗口连接会话：
+
+```powershell
+$env:AGENTRT_ENGINE = 'graph'
+uv run agentrt chat
+```
+
+Graph P1 使用进程内 `InMemorySaver` 续接同一 Session，并按 thread 隔离；
+`thread.jsonl` 仍是权威会话记录。它不提供 daemon 重启恢复、外部 resume、
+interrupt/HITL 或 time travel。配置、四类预算、清理生命周期与离线演示见
+[Optional LangGraph Engine](docs/graph-engine.md)。
+
 ## 事件流示例
 
 ```json
-{"type":"run.started","run_id":"20260629-101500-a1b2c3","goal":"...","ts":"..."}
-{"type":"llm.token","run_id":"20260629-101500-a1b2c3","token":"I","ts":"..."}
-{"type":"tool.started","run_id":"20260629-101500-a1b2c3","tool_name":"list_dir","ts":"..."}
-{"type":"permission.requested","run_id":"20260629-101500-a1b2c3","tool_name":"bash","ts":"..."}
-{"type":"tool.finished","run_id":"20260629-101500-a1b2c3","tool_name":"list_dir","is_error":false,"ts":"..."}
-{"type":"run.finished","run_id":"20260629-101500-a1b2c3","status":"success","ts":"..."}
+{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"goal":"...","ts":"..."}
+{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"token":"I","ts":"..."}
+{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
+{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
+{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
+{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
 ```
 
 ## 仓库结构
@@ -148,11 +179,13 @@ agent-runtime-kit/
 |-- docs/
 |   |-- architecture.md
 |   |-- agent-loop.md
+|   |-- graph-engine.md
 |   |-- tool-permissions.md
 |   |-- session-memory.md
 |   |-- skills-subagents-mcp.md
 |   `-- project-highlights.md
 |-- examples/
+|   |-- graph_offline_demo.py
 |   |-- basic_run/
 |   |-- permissions/
 |   |   `-- trace_permission_flow.py
@@ -166,6 +199,11 @@ agent-runtime-kit/
 |   |-- tui/
 |   `-- core/
 |       |-- app.py
+|       |-- engine/
+|       |   |-- base.py
+|       |   |-- loop_engine.py
+|       |   `-- router.py
+|       |-- graph/
 |       |-- runner.py
 |       |-- loop.py
 |       |-- bus/
@@ -185,12 +223,21 @@ agent-runtime-kit/
 
 ## 开发与检查
 
+基础安装不包含 LangGraph，可运行基础检查与非 Graph、非在线集成测试：
+
 ```bash
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
+uv run pytest tests/ -m "not graph and not integration" -v
+uv run python scripts/check_wire_protocol.py --check
+```
+
+完整源码类型检查会检查可选 Graph 模块，因此需先安装 Graph extra：
+
+```bash
+uv sync --extra graph
 uv run mypy src
 uv run pytest tests/ -v
-uv run python scripts/check_wire_protocol.py --check
 ```
 
 原生 Windows 下，如果 `uv` 脚本入口出现 trampoline path 错误，可以改用 Python 模块方式运行工具：
@@ -210,6 +257,7 @@ uv run python scripts/generate_wire_protocol.py
 
 - [Architecture](docs/architecture.md)
 - [Agent Loop](docs/agent-loop.md)
+- [Optional LangGraph Engine](docs/graph-engine.md)
 - [Tool Permissions](docs/tool-permissions.md)
 - [Session Memory](docs/session-memory.md)
 - [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)

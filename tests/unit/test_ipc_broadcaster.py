@@ -5,7 +5,16 @@ import json
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
-from agent_runtime.core.bus.events import RunStartedEvent, StepStartedEvent
+from pydantic import BaseModel
+
+from agent_runtime.core.bus.events import (
+    CoreStartedEvent,
+    PermissionGrantedEvent,
+    PermissionRequestedEvent,
+    RunStartedEvent,
+    StepStartedEvent,
+    ToolCallStartedEvent,
+)
 from agent_runtime.core.transport.ipc_broadcaster import IpcEventBroadcaster
 
 
@@ -18,8 +27,13 @@ def _make_writer(*, drain_raises: Exception | None = None) -> asyncio.StreamWrit
     return cast(asyncio.StreamWriter, writer)
 
 
-def _run_started(run_id: str = "r1") -> RunStartedEvent:
-    return RunStartedEvent(run_id=run_id, goal="test", ts="2026-01-01T00:00:00Z")
+def _run_started(run_id: str = "r1", session_id: str | None = "s1") -> RunStartedEvent:
+    return RunStartedEvent(
+        run_id=run_id,
+        session_id=session_id,
+        goal="test",
+        ts="2026-01-01T00:00:00Z",
+    )
 
 
 # 功能：验证 subscribe 后 handle 将匹配 topic 的事件写入 writer，且内容是合法的 EventPushEnvelope
@@ -28,6 +42,7 @@ async def test_subscriber_receives_matching_event() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer()
     broadcaster.subscribe(writer, topics=["run.*"])
+    broadcaster.bind_session(writer, "s1")
 
     await broadcaster.handle(_run_started())
 
@@ -54,8 +69,14 @@ async def test_topic_glob_matches_step_not_run() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer()
     broadcaster.subscribe(writer, topics=["step.*"])
+    broadcaster.bind_session(writer, "s1")
 
-    step_event = StepStartedEvent(run_id="r1", step=1, ts="2026-01-01T00:00:00Z")
+    step_event = StepStartedEvent(
+        run_id="r1",
+        session_id="s1",
+        step=1,
+        ts="2026-01-01T00:00:00Z",
+    )
     run_event = _run_started()
 
     await broadcaster.handle(step_event)
@@ -72,6 +93,7 @@ async def test_scope_global_receives_all_run_ids() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer()
     broadcaster.subscribe(writer, topics=["run.*"], scope="global")
+    broadcaster.bind_session(writer, "s1")
 
     await broadcaster.handle(_run_started("r1"))
     await broadcaster.handle(_run_started("r2"))
@@ -85,11 +107,142 @@ async def test_scope_run_specific_filters_other_run_ids() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer()
     broadcaster.subscribe(writer, topics=["run.*"], scope="run:abc")
+    broadcaster.bind_session(writer, "s1")
 
     await broadcaster.handle(_run_started("abc"))
     await broadcaster.handle(_run_started("xyz"))
 
     assert writer.write.call_count == 1  # type: ignore[attr-defined]
+
+
+# 功能：验证 global 订阅只收到属于当前连接 session 的权限请求
+# 设计：两个连接分别绑定 s1/s2，发布 s1 的 permission.requested，仅 s1 owner 收到
+async def test_permission_event_is_filtered_by_connection_session_owner() -> None:
+    broadcaster = IpcEventBroadcaster()
+    owner = _make_writer()
+    other = _make_writer()
+    broadcaster.subscribe(owner, topics=["permission.*"], scope="global")
+    broadcaster.subscribe(other, topics=["permission.*"], scope="global")
+    broadcaster.bind_session(owner, "s1")
+    broadcaster.bind_session(other, "s2")
+
+    await broadcaster.handle(
+        PermissionRequestedEvent(
+            run_id="r1",
+            tool_use_id="tool-1",
+            tool_name="bash",
+            params={"command": "echo safe"},
+            param_preview="echo safe",
+            session_id="s1",
+            ts="2026-01-01T00:00:00Z",
+        )
+    )
+
+    owner.write.assert_called_once()  # type: ignore[attr-defined]
+    other.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+# 功能：验证缺失 session_id 的旧权限事件不会通过 global 订阅泄露
+# 设计：即使连接绑定了 session，无法证明归属的 permission.granted 也应 fail closed
+async def test_permission_event_without_session_id_is_not_delivered() -> None:
+    broadcaster = IpcEventBroadcaster()
+    writer = _make_writer()
+    broadcaster.subscribe(writer, topics=["permission.*"], scope="global")
+    broadcaster.bind_session(writer, "s1")
+
+    await broadcaster.handle(
+        PermissionGrantedEvent(
+            run_id="r1",
+            tool_use_id="tool-1",
+            decision="allow_once",
+            ts="2026-01-01T00:00:00Z",
+        )
+    )
+
+    writer.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+async def test_run_and_tool_events_without_session_id_fail_closed() -> None:
+    broadcaster = IpcEventBroadcaster()
+    writer = _make_writer()
+    broadcaster.subscribe(writer, topics=["run.*", "tool.*"], scope="global")
+    broadcaster.bind_session(writer, "s1")
+
+    await broadcaster.handle(_run_started(session_id=None))
+    await broadcaster.handle(
+        ToolCallStartedEvent(
+            run_id="r1",
+            tool_use_id="tool-1",
+            tool_name="bash",
+            params={"command": "secret"},
+            ts="2026-01-01T00:00:00Z",
+        )
+    )
+
+    writer.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+async def test_session_event_is_sent_only_to_exclusive_owner() -> None:
+    broadcaster = IpcEventBroadcaster()
+    owner = _make_writer()
+    other = _make_writer()
+    broadcaster.subscribe(owner, topics=["run.*"])
+    broadcaster.subscribe(other, topics=["run.*"])
+    assert broadcaster.bind_session(owner, "s1") is True
+    assert broadcaster.bind_session(other, "s1") is False
+
+    await broadcaster.handle(_run_started(session_id="s1"))
+
+    owner.write.assert_called_once()  # type: ignore[attr-defined]
+    other.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+async def test_tool_call_params_are_visible_only_to_session_owner() -> None:
+    broadcaster = IpcEventBroadcaster()
+    owner = _make_writer()
+    other = _make_writer()
+    broadcaster.subscribe(owner, topics=["tool.*"])
+    broadcaster.subscribe(other, topics=["tool.*"])
+    broadcaster.bind_session(owner, "s1")
+    broadcaster.bind_session(other, "s2")
+
+    await broadcaster.handle(
+        ToolCallStartedEvent(
+            run_id="r1",
+            session_id="s1",
+            tool_use_id="tool-1",
+            tool_name="bash",
+            params={"command": "echo private-token"},
+            ts="2026-01-01T00:00:00Z",
+        )
+    )
+
+    owner.write.assert_called_once()  # type: ignore[attr-defined]
+    other.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+async def test_non_sensitive_core_event_remains_globally_visible() -> None:
+    broadcaster = IpcEventBroadcaster()
+    writer = _make_writer()
+    broadcaster.subscribe(writer, topics=["core.*"])
+
+    await broadcaster.handle(CoreStartedEvent(listen_addr="127.0.0.1:7437", version="1"))
+
+    writer.write.assert_called_once()  # type: ignore[attr-defined]
+
+
+async def test_unknown_ownerless_event_fails_closed() -> None:
+    class PluginEvent(BaseModel):
+        type: str = "plugin.secret"
+        payload: str
+
+    broadcaster = IpcEventBroadcaster()
+    writer = _make_writer()
+    broadcaster.subscribe(writer, topics=["*"])
+
+    await broadcaster.handle(PluginEvent(payload="private"))
+
+    writer.write.assert_not_called()  # type: ignore[attr-defined]
 
 
 # 功能：验证 unsubscribe 后 handle 不再向该 writer 发送事件
@@ -98,11 +251,13 @@ async def test_unsubscribe_stops_delivery() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer()
     broadcaster.subscribe(writer, topics=["run.*"])
+    broadcaster.bind_session(writer, "s1")
     broadcaster.unsubscribe(writer)
 
     await broadcaster.handle(_run_started())
 
     writer.write.assert_not_called()  # type: ignore[attr-defined]
+    assert broadcaster.session_ids_for(writer) == frozenset()
 
 
 # 功能：验证写入失败（ConnectionResetError）后订阅自动移除，下次 handle 不再尝试写入
@@ -112,6 +267,7 @@ async def test_dead_connection_removed_after_failure() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer(drain_raises=ConnectionResetError())
     broadcaster.subscribe(writer, topics=["run.*"])
+    broadcaster.bind_session(writer, "s1")
 
     event = _run_started()
     await broadcaster.handle(event)  # drain fails → subscription removed
@@ -121,3 +277,21 @@ async def test_dead_connection_removed_after_failure() -> None:
     writer.write.reset_mock()  # type: ignore[attr-defined]
     await broadcaster.handle(event)  # no subscribers remain
     writer.write.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_disconnected_writer_cannot_rebind_or_subscribe() -> None:
+    disconnected: list[frozenset[str]] = []
+    broadcaster = IpcEventBroadcaster(on_disconnect=disconnected.append)
+    writer = _make_writer()
+    assert broadcaster.bind_session(writer, "s1") is True
+    broadcaster.mark_disconnected(writer)
+
+    # Tombstoning closes the authorization window before ownership cleanup.
+    assert broadcaster.session_ids_for(writer) == frozenset()
+
+    assert broadcaster.disconnect(writer) == frozenset({"s1"})
+
+    assert disconnected == [frozenset({"s1"})]
+    assert broadcaster.bind_session(writer, "s2") is False
+    broadcaster.subscribe(writer, ["core.*"])
+    assert broadcaster.session_ids_for(writer) == frozenset()

@@ -4,6 +4,7 @@ import asyncio
 import sys
 from typing import Any
 
+from agent_runtime.cli.commands.run import _safe_code, _state_diff_summary
 from agent_runtime.core.config import RuntimeConfig
 from agent_runtime.core.transport.socket_client import IpcError, SocketClient
 
@@ -33,6 +34,19 @@ class ChatPrinter:
         if t == "llm.token":
             print(event.get("token", ""), end="", flush=True)
             self._inline = True
+        elif t == "node.started":
+            self._ensure_newline()
+            node_id = _safe_code(event.get("node_id")) or "unknown"
+            print(f"[node {node_id}] started")
+        elif t == "node.finished":
+            self._ensure_newline()
+            node_id = _safe_code(event.get("node_id")) or "unknown"
+            status = _safe_code(event.get("status")) or "unknown"
+            print(f"[node {node_id}] {status}")
+        elif t == "state.diff":
+            self._ensure_newline()
+            node_id = _safe_code(event.get("node_id")) or "unknown"
+            print(f"[state {node_id}] {_state_diff_summary(event.get('diff'))}")
         elif t == "tool.call_started":
             self._ensure_newline()
             print(f"[tool] {event.get('tool_name', '')}")
@@ -48,6 +62,13 @@ class ChatPrinter:
             self._ensure_newline()
             self.pending_permission_id = None
             print("[waiting for input]")
+        elif t == "run.finished" and event.get("status") != "success":
+            self._ensure_newline()
+            reason = str(event.get("reason") or "unknown error")
+            error = event.get("error")
+            message = str(error.get("message") or "") if isinstance(error, dict) else ""
+            detail = message or reason
+            print(f"[run failed] {reason}: {detail}", file=sys.stderr)
         elif t == "session.closed":
             self._ensure_newline()
             print("session closed.")
@@ -76,7 +97,15 @@ async def _chat_async(config: RuntimeConfig) -> int:
         await client.send_command(
             "event.subscribe",
             {
-                "topics": ["session.*", "run.*", "tool.*", "llm.token", "permission.*"],
+                "topics": [
+                    "session.*",
+                    "run.*",
+                    "node.*",
+                    "state.diff",
+                    "tool.*",
+                    "llm.token",
+                    "permission.*",
+                ],
                 "scope": "global",
             },
         )
