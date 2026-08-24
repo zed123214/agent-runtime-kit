@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agent_runtime.core.events.bus import EventBus
 from agent_runtime.core.llm.types import ToolCallBlock
+from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.tools.base import BaseTool, ToolResult
 from agent_runtime.core.tools.invocation import invoke_tool
 from agent_runtime.core.tools.registry import ToolRegistry
@@ -143,3 +144,40 @@ async def test_runtime_exception_gives_runtime_error() -> None:
 async def test_started_event_always_first() -> None:
     result, events = await _run(ToolRegistry(), _call("nonexistent"))
     assert events[0].type == "tool.call_started"  # type: ignore[attr-defined]
+
+
+async def test_permission_pending_identity_uses_invoke_run_id() -> None:
+    registry = ToolRegistry()
+    registry.register(_EchoTool())
+    bus = EventBus()
+    requested = asyncio.Event()
+
+    async def collect(event: BaseModel) -> None:
+        if event.type == "permission.requested":  # type: ignore[attr-defined]
+            requested.set()
+
+    bus.subscribe(collect)
+    manager = PermissionManager(timeout_s=0)
+    invocation = asyncio.create_task(
+        invoke_tool(
+            registry,
+            _call("echo", {"msg": "hello"}, uid="shared-id"),
+            bus,
+            run_id="root-run",
+            permission_manager=manager,
+            session_id="session-1",
+        )
+    )
+    await asyncio.wait_for(requested.wait(), timeout=1.0)
+
+    assert set(manager._pending) == {("session-1", "root-run", "shared-id")}
+    assert manager.respond(
+        "shared-id",
+        "allow_once",
+        authorized_session_ids={"session-1"},
+        session_id="session-1",
+        run_id="root-run",
+    )
+
+    result = await asyncio.wait_for(invocation, timeout=1.0)
+    assert result == ToolResult(content="hello")

@@ -17,8 +17,11 @@ _DEFAULT_CONFIG_PATH = "~/.agentrt/config.toml"
 _DEFAULT_MAX_STEPS = 20
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 _DEFAULT_TRACE_FILE = "~/.agentrt/traces/daemon.jsonl"
+_DEFAULT_DATA_ROOT = "~/.agentrt"
+_DEFAULT_SQLITE_CHECKPOINT_FILE = "graph-checkpoints.sqlite3"
 
 type EngineName = Literal["loop", "graph"]
+type CheckpointBackend = Literal["memory", "sqlite"]
 
 
 @dataclass
@@ -40,6 +43,8 @@ class GraphConfig:
     tool_call_budget: int = 64
     wall_time_s: float = 300.0
     trace_event_limit: int = 64
+    checkpoint_backend: CheckpointBackend = "memory"
+    checkpoint_path: str | None = None
 
 
 @dataclass
@@ -87,6 +92,7 @@ class McpConfig:
 class RuntimeConfig:
     host: str = _DEFAULT_HOST
     port: int = _DEFAULT_PORT
+    data_root: str = _DEFAULT_DATA_ROOT
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
@@ -124,7 +130,48 @@ def get_config() -> RuntimeConfig:
             _apply_toml(config, data)
 
     _apply_env(config)
+    data_root = Path(config.data_root).expanduser()
+    # A custom data root defines an isolated daemon instance.  Keep explicitly
+    # configured observability paths intact, but scope the built-in defaults to
+    # that same root so two offline daemons cannot share logs or traces.
+    if config.logging.file == _DEFAULT_LOG_FILE:
+        config.logging.file = str(data_root / "logs" / "core.log")
+    if config.trace.file == _DEFAULT_TRACE_FILE:
+        config.trace.file = str(data_root / "traces" / "daemon.jsonl")
     return config
+
+
+def resolve_data_root(config: RuntimeConfig) -> Path:
+    """Resolve the daemon-owned data root used for all durable state."""
+
+    if not config.data_root.strip():
+        raise SystemExit("Config error: core.data_root must be a non-empty path")
+    try:
+        return Path(config.data_root).expanduser().resolve()
+    except (OSError, RuntimeError) as exc:
+        raise SystemExit("Config error: core.data_root could not be resolved") from exc
+
+
+def resolve_graph_checkpoint_path(config: RuntimeConfig, data_root: Path) -> Path | None:
+    """Resolve the configured SQLite file while confining it to ``data_root``."""
+
+    if config.graph.checkpoint_backend == "memory":
+        return None
+
+    configured = config.graph.checkpoint_path
+    if configured is not None and not configured.strip():
+        raise SystemExit("Config error: graph.checkpoint_path must be a non-empty path")
+    candidate = Path(configured or _DEFAULT_SQLITE_CHECKPOINT_FILE).expanduser()
+    if not candidate.is_absolute():
+        candidate = data_root / candidate
+    try:
+        resolved_root = data_root.resolve()
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise SystemExit("Config error: graph.checkpoint_path could not be resolved") from exc
+    if resolved == resolved_root or not resolved.is_relative_to(resolved_root):
+        raise SystemExit("Config error: graph.checkpoint_path must resolve inside core.data_root")
+    return resolved
 
 
 # 将已解析的 TOML 根表写入 config；未知小节或类型错误时退出进程
@@ -147,7 +194,7 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
         core = data["core"]
         if not isinstance(core, dict):
             raise SystemExit("Config error: [core] must be a table")
-        unknown_core: set[str] = set(core.keys()) - {"host", "port"}
+        unknown_core: set[str] = set(core.keys()) - {"host", "port", "data_root"}
         if unknown_core:
             raise SystemExit(f"Unknown [core] keys: {', '.join(sorted(unknown_core))}")
         if "host" in core:
@@ -160,6 +207,11 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
             if not isinstance(val, int):
                 raise SystemExit("Config error: core.port must be an integer")
             config.port = val
+        if "data_root" in core:
+            val = core["data_root"]
+            if not isinstance(val, str) or not val.strip():
+                raise SystemExit("Config error: core.data_root must be a non-empty string")
+            config.data_root = val
 
     if "logging" in data:
         log = data["logging"]
@@ -202,6 +254,8 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
             "tool_call_budget",
             "wall_time_s",
             "trace_event_limit",
+            "checkpoint_backend",
+            "checkpoint_path",
         }
         if unknown_graph:
             raise SystemExit(f"Unknown [graph] keys: {', '.join(sorted(unknown_graph))}")
@@ -219,6 +273,20 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
             if isinstance(val, bool) or not isinstance(val, (int, float)) or not val > 0:
                 raise SystemExit("Config error: graph.wall_time_s must be a positive number")
             config.graph.wall_time_s = float(val)
+
+        if "checkpoint_backend" in graph:
+            val = graph["checkpoint_backend"]
+            if not isinstance(val, str) or val not in ("memory", "sqlite"):
+                raise SystemExit(
+                    "Config error: graph.checkpoint_backend must be 'memory' or 'sqlite'"
+                )
+            config.graph.checkpoint_backend = cast(CheckpointBackend, val)
+
+        if "checkpoint_path" in graph:
+            val = graph["checkpoint_path"]
+            if not isinstance(val, str) or not val.strip():
+                raise SystemExit("Config error: graph.checkpoint_path must be a non-empty string")
+            config.graph.checkpoint_path = val
 
     if "llm" in data:
         llm = data["llm"]
@@ -361,6 +429,12 @@ def _apply_env(config: RuntimeConfig) -> None:
     if host is not None:
         config.host = host
 
+    data_root = os.environ.get("AGENTRT_DATA_ROOT")
+    if data_root is not None:
+        if not data_root.strip():
+            raise SystemExit("Config error: AGENTRT_DATA_ROOT must be a non-empty path")
+        config.data_root = data_root
+
     port_str = os.environ.get("AGENTRT_PORT")
     if port_str is not None:
         try:
@@ -400,6 +474,20 @@ def _apply_env(config: RuntimeConfig) -> None:
         if engine not in ("loop", "graph"):
             raise SystemExit("Config error: AGENTRT_ENGINE must be 'loop' or 'graph'")
         config.agent.engine = cast(EngineName, engine)
+
+    checkpoint_backend = os.environ.get("AGENTRT_GRAPH_CHECKPOINT_BACKEND")
+    if checkpoint_backend is not None:
+        if checkpoint_backend not in ("memory", "sqlite"):
+            raise SystemExit(
+                "Config error: AGENTRT_GRAPH_CHECKPOINT_BACKEND must be 'memory' or 'sqlite'"
+            )
+        config.graph.checkpoint_backend = cast(CheckpointBackend, checkpoint_backend)
+
+    checkpoint_path = os.environ.get("AGENTRT_GRAPH_CHECKPOINT_PATH")
+    if checkpoint_path is not None:
+        if not checkpoint_path.strip():
+            raise SystemExit("Config error: AGENTRT_GRAPH_CHECKPOINT_PATH must be a non-empty path")
+        config.graph.checkpoint_path = checkpoint_path
 
     graph_recursion_limit = os.environ.get("AGENTRT_GRAPH_RECURSION_LIMIT")
     if graph_recursion_limit is not None:

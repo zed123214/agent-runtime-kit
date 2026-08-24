@@ -192,21 +192,24 @@ async def test_cancel_after_handler_defers_until_successful_finished_and_state_d
     ]
 
 
-async def test_cancel_is_bounded_when_finished_subscriber_suppresses_cancellation() -> None:
+async def test_cancel_waits_for_finished_publisher_that_swallows_first_cancellation() -> None:
     parent = EventBus()
     handler_entered = asyncio.Event()
     finish_entered = asyncio.Event()
+    cancellation_swallowed = asyncio.Event()
     release_subscriber = asyncio.Event()
-    subscriber_drained = asyncio.Event()
+    delivery_completed = asyncio.Event()
 
     async def stubborn_subscriber(event: BaseModel) -> None:
         if getattr(event, "type", None) != "node.finished":
             return
         finish_entered.set()
         try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellation_swallowed.set()
             await release_subscriber.wait()
-        finally:
-            subscriber_drained.set()
+        delivery_completed.set()
 
     parent.subscribe(stubborn_subscriber)
     bridge = NodeEventBridge(
@@ -225,11 +228,13 @@ async def test_cancel_is_bounded_when_finished_subscriber_suppresses_cancellatio
     await asyncio.wait_for(handler_entered.wait(), timeout=1.0)
     task.cancel()
     await asyncio.wait_for(finish_entered.wait(), timeout=1.0)
+    await asyncio.wait_for(cancellation_swallowed.wait(), timeout=1.0)
 
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, timeout=0.5)
-    await asyncio.wait_for(subscriber_drained.wait(), timeout=1.0)
+    assert not task.done()
     release_subscriber.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+    assert delivery_completed.is_set()
 
 
 async def test_cancel_is_bounded_after_state_diff_reaches_slow_subscriber() -> None:

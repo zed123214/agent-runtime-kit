@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -43,6 +44,45 @@ def get_connection_writer() -> asyncio.StreamWriter:
 
 
 _MAX_LINE_BYTES = 64 * 1024 * 1024  # 64 MB per frame，兼容 MCP 大文件工具结果
+_SENSITIVE_IPC_FIELDS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "env",
+        "next_resume_token",
+        "password",
+        "resume_token",
+        "secret",
+    }
+)
+_SENSITIVE_TEXT_RE = re.compile(
+    r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)"
+    r"(\s*[:=]\s*)(?:bearer\s+)?([^\s,'\"}]+)"
+)
+
+
+def _redact_sensitive_text(value: str) -> str:
+    return _SENSITIVE_TEXT_RE.sub(r"\1\2[REDACTED]", value)
+
+
+def redact_sensitive_fields(value: Any) -> Any:
+    """Return a trace-safe copy with raw resume capabilities removed."""
+
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]"
+            if str(key).casefold() in _SENSITIVE_IPC_FIELDS
+            else redact_sensitive_fields(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_fields(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_fields(item) for item in value)
+    if isinstance(value, str):
+        return _redact_sensitive_text(value)
+    return value
 
 
 class SocketServer:
@@ -179,7 +219,9 @@ class SocketServer:
                     layer="ipc",
                     kind="command",
                     client_id=client_id,
-                    data={"method": req.method, "id": req.id, "params": req.params},
+                    data=redact_sensitive_fields(
+                        {"method": req.method, "id": req.id, "params": req.params}
+                    ),
                 )
             )
 
@@ -228,6 +270,6 @@ class SocketServer:
                     layer="ipc",
                     kind=kind,
                     client_id=client_id,
-                    data=msg.model_dump(),
+                    data=redact_sensitive_fields(msg.model_dump()),
                 )
             )

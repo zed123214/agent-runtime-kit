@@ -18,16 +18,21 @@ from agent_runtime.core.bus.events import (
 from agent_runtime.core.events.bus import EventBus
 from agent_runtime.core.runs import new_run_id
 from agent_runtime.core.session.model import Session, SessionMode
-from agent_runtime.core.session.store import SessionStore
+from agent_runtime.core.session.store import SessionStore, TranscriptStoreError
 from agent_runtime.core.skills.loader import SkillLoader
 
 if TYPE_CHECKING:
+    from agent_runtime.core.engine.base import EngineRunResult
+    from agent_runtime.core.graph.recovery import RecoveryRun, RecoveryStore
     from agent_runtime.core.llm.base import LLMProvider
     from agent_runtime.core.runner import AgentRunner
 
 SESSION_NOT_FOUND = -32010
 SESSION_CLOSED = -32011
 SESSION_BUSY = -32012
+SESSION_SUSPENDED = -32013
+SESSION_STATE_ERROR = -32014
+RECOVERY_CONFLICT = -32031
 
 
 # 返回当前 UTC 时间的 ISO 8601 字符串
@@ -45,6 +50,7 @@ class SessionManager:
         provider: LLMProvider | None = None,
         provider_factory: Callable[[], LLMProvider] | None = None,
         on_session_closed: Callable[[str], Awaitable[None]] | None = None,
+        recovery_store: RecoveryStore | None = None,
     ) -> None:
         self._store = store
         self._runner_factory = runner_factory
@@ -52,6 +58,7 @@ class SessionManager:
         self._provider = provider
         self._provider_factory = provider_factory
         self._on_session_closed = on_session_closed
+        self._recovery_store = recovery_store
         self._sessions: dict[str, Session] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._skill_loader = SkillLoader()
@@ -63,6 +70,7 @@ class SessionManager:
         title: str = "",
         *,
         before_publish: Callable[[Session], None] | None = None,
+        durable: bool = False,
     ) -> Session:
         sid = f"sess-{uuid.uuid4().hex[:12]}"
         ts = _now()
@@ -74,6 +82,7 @@ class SessionManager:
             created_at=ts,
             updated_at=ts,
             run_ids=[],
+            durable=durable,
         )
         if before_publish is not None:
             before_publish(session)
@@ -85,6 +94,8 @@ class SessionManager:
 
     # 处理用户消息，追加 thread 并启动一次 agent run
     async def send_message(self, sid: str, content: str, *, run_id: str | None = None) -> str:
+        from agent_runtime.core.engine.base import RunSuspension
+
         session = self._get_session(sid)
         lock = self._locks[sid]
         if lock.locked():
@@ -93,11 +104,29 @@ class SessionManager:
         async with lock:
             if session.status == "closed":
                 raise HandlerError(SESSION_CLOSED, "session already closed")
+            if session.status == "suspended":
+                raise HandlerError(SESSION_SUSPENDED, "session suspended")
+
+            run_id = run_id or new_run_id()
+            if session.durable:
+                if self._recovery_store is None:
+                    raise RuntimeError("durable session requires a RecoveryStore")
+                if await self._recovery_store.latest_unfinished_run(sid) is not None:
+                    raise HandlerError(SESSION_SUSPENDED, "session has an unfinished run")
 
             if session.status == "waiting_for_input":
                 await self._bus.publish(SessionResumedEvent(session_id=sid, ts=_now()))
 
-            self._store.append_message(sid, "user", content)
+            try:
+                self._store.append_message(sid, "user", content)
+                if session.durable:
+                    self._store.read_messages_strict(sid)
+            except TranscriptStoreError as exc:
+                raise HandlerError(
+                    SESSION_STATE_ERROR,
+                    "session transcript is not recoverable",
+                    {"code": exc.code},
+                ) from exc
             await self._bus.publish(
                 SessionMessageReceivedEvent(session_id=sid, content=content, ts=_now())
             )
@@ -105,8 +134,17 @@ class SessionManager:
             if not session.title:
                 session.title = content[:40]
 
-            run_id = run_id or new_run_id()
+            if session.durable:
+                assert self._recovery_store is not None
+                await self._recovery_store.create_run(
+                    session_id=sid,
+                    run_id=run_id,
+                    thread_id=sid,
+                    engine="graph",
+                    status="running",
+                )
             session.run_ids.append(run_id)
+            session.active_run_id = run_id
             session.updated_at = _now()
             self._store.write_meta(session)
 
@@ -135,7 +173,7 @@ class SessionManager:
                     )
 
             runner = self._runner_factory()
-            await runner.run_and_capture(
+            result = await runner.run_and_capture(
                 goal,
                 run_id=run_id,
                 session=session,
@@ -145,8 +183,18 @@ class SessionManager:
             )
 
             session.updated_at = _now()
+            if isinstance(result, RunSuspension):
+                session.status = "suspended"
+                session.active_run_id = run_id
+                self._store.write_meta(session)
+                evict = True
+            else:
+                evict = False
+                session.active_run_id = None
             session_closed = session.mode == "one_shot"
-            if session.mode == "one_shot":
+            if evict:
+                session_closed = False
+            elif session.mode == "one_shot":
                 session.status = "closed"
                 await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
             else:
@@ -161,7 +209,130 @@ class SessionManager:
             self._store.write_meta(session)
             if session_closed and self._on_session_closed is not None:
                 await self._on_session_closed(sid)
-            return run_id
+        if evict:
+            self.evict(sid)
+        return run_id
+
+    def hydrate(self, sid: str) -> Session:
+        """Load one explicitly authorized session into the process-local index."""
+
+        existing = self._sessions.get(sid)
+        if existing is not None:
+            return existing
+        try:
+            session = self._store.read_meta(sid)
+        except (FileNotFoundError, OSError, ValueError, KeyError):
+            raise HandlerError(SESSION_NOT_FOUND, "session not found") from None
+        self._sessions[sid] = session
+        self._locks[sid] = asyncio.Lock()
+        return session
+
+    def hydrate_recovery(self, sid: str, run: RecoveryRun | None) -> Session:
+        """Hydrate metadata and reconcile it with the authoritative recovery index."""
+
+        session = self.hydrate(sid)
+        if not session.durable or session.mode != "chat":
+            raise HandlerError(SESSION_NOT_FOUND, "session not found")
+        if session.status == "closed":
+            raise HandlerError(SESSION_CLOSED, "session already closed")
+        if run is None:
+            session.status = "waiting_for_input"
+            session.active_run_id = None
+        else:
+            session.status = "suspended"
+            session.active_run_id = run.run_id
+            if run.run_id not in session.run_ids:
+                session.run_ids.append(run.run_id)
+        session.updated_at = _now()
+        self._store.write_meta(session)
+        return session
+
+    def is_recovery_closed(self, sid: str) -> bool:
+        """Check persisted closed state without hydrating or mutating the session."""
+
+        try:
+            session = self._store.read_meta(sid)
+        except (FileNotFoundError, OSError, ValueError, KeyError):
+            return False
+        return session.durable and session.mode == "chat" and session.status == "closed"
+
+    def evict(self, sid: str) -> None:
+        self._sessions.pop(sid, None)
+        self._locks.pop(sid, None)
+
+    async def resume_run(
+        self,
+        sid: str,
+        run: RecoveryRun,
+        *,
+        resume_value: object | None = None,
+    ) -> EngineRunResult:
+        """Resume the leased durable run without creating a second logical run."""
+
+        from agent_runtime.core.engine.base import RunSuspension
+
+        session = self._get_session(sid)
+        if run.session_id != sid or run.status != "resuming":
+            raise HandlerError(SESSION_SUSPENDED, "run is not resumable")
+        if run.checkpoint_revision is None:
+            raise HandlerError(SESSION_SUSPENDED, "run has no checkpoint revision")
+        lock = self._locks[sid]
+        if lock.locked():
+            raise HandlerError(SESSION_BUSY, "session busy")
+
+        evict = False
+        async with lock:
+            session.status = "active"
+            session.active_run_id = run.run_id
+            if run.run_id not in session.run_ids:
+                session.run_ids.append(run.run_id)
+            session.updated_at = _now()
+            self._store.write_meta(session)
+            try:
+                messages = self._store.read_messages_strict(sid)
+            except TranscriptStoreError as exc:
+                raise HandlerError(
+                    SESSION_STATE_ERROR,
+                    "session transcript is not recoverable",
+                    {"code": exc.code},
+                ) from exc
+            goal = next(
+                (
+                    str(message.get("content", ""))
+                    for message in reversed(messages)
+                    if message.get("role") == "user"
+                ),
+                "",
+            )
+            result = await self._runner_factory().run_and_capture(
+                goal,
+                run_id=run.run_id,
+                session=session,
+                store=self._store,
+                resume=True,
+                resume_value=resume_value,
+                expected_checkpoint_revision=run.checkpoint_revision,
+                resume_epoch=run.resume_epoch,
+            )
+            session.updated_at = _now()
+            if isinstance(result, RunSuspension):
+                session.status = "suspended"
+                session.active_run_id = run.run_id
+                evict = True
+            else:
+                session.status = "waiting_for_input"
+                session.active_run_id = None
+                await self._bus.publish(
+                    SessionWaitingForInputEvent(
+                        session_id=sid,
+                        last_run_id=run.run_id,
+                        ts=session.updated_at,
+                    )
+                )
+            self._store.write_meta(session)
+        if evict:
+            self.evict(sid)
+        return result
 
     # 关闭指定 session 并更新 meta.json
     async def close(self, sid: str) -> None:
@@ -170,19 +341,85 @@ class SessionManager:
         if lock.locked():
             raise HandlerError(SESSION_BUSY, "session busy")
         async with lock:
+            if session.status == "closed":
+                if self._on_session_closed is not None:
+                    await self._on_session_closed(sid)
+                return
+            if session.durable and self._recovery_store is not None:
+                unfinished = await self._recovery_store.latest_unfinished_run(sid)
+                if unfinished is not None:
+                    if unfinished.status != "suspended" or unfinished.checkpoint_revision is None:
+                        raise HandlerError(SESSION_BUSY, "session has an active run")
+                    from agent_runtime.core.engine.base import ExecutionEngineError
+                    from agent_runtime.core.graph.event_log import EventLogError
+
+                    try:
+                        await self._runner_factory().close_suspended(
+                            session=session,
+                            store=self._store,
+                            run_id=unfinished.run_id,
+                            checkpoint_revision=unfinished.checkpoint_revision,
+                            resume_epoch=unfinished.resume_epoch,
+                        )
+                    except (TranscriptStoreError, EventLogError) as exc:
+                        raise HandlerError(
+                            SESSION_STATE_ERROR,
+                            "durable session state is not recoverable",
+                            {"code": exc.code},
+                        ) from exc
+                    except ExecutionEngineError as exc:
+                        raise HandlerError(
+                            RECOVERY_CONFLICT,
+                            "durable session checkpoint conflicts with recovery state",
+                            {"code": exc.detail.code},
+                        ) from exc
             session.status = "closed"
+            session.active_run_id = None
             session.updated_at = _now()
             self._store.write_meta(session)
             await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
             if self._on_session_closed is not None:
                 await self._on_session_closed(sid)
 
+    # 连接已失去 ownership 且运行任务已收尾时，持久化 closed 并回收进程内会话
+    async def close_disconnected(self, sid: str) -> bool:
+        session = self._sessions.get(sid)
+        if session is None:
+            try:
+                session = self.hydrate(sid)
+            except HandlerError:
+                return False
+        lock = self._locks[sid]
+        async with lock:
+            if session.durable and self._recovery_store is not None:
+                unfinished = await self._recovery_store.latest_unfinished_run(sid)
+                if unfinished is not None and unfinished.status == "suspended":
+                    session.status = "suspended"
+                    session.active_run_id = unfinished.run_id
+                    session.updated_at = _now()
+                    self._store.write_meta(session)
+                    preserve = True
+                else:
+                    preserve = False
+            else:
+                preserve = False
+            if not preserve and session.status != "closed":
+                session.status = "closed"
+                session.active_run_id = None
+                session.updated_at = _now()
+                self._store.write_meta(session)
+                await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
+        self.evict(sid)
+        return preserve
+
     # 手动压缩指定 session 的 thread，将摘要持久化写入 thread.jsonl
     async def compact(self, sid: str, focus: str = "") -> Any:
-        self._get_session(sid)
+        session = self._get_session(sid)
         lock = self._locks[sid]
         if lock.locked():
             raise HandlerError(SESSION_BUSY, "session busy")
+        if session.status == "suspended":
+            raise HandlerError(SESSION_SUSPENDED, "session suspended")
         if self._provider is None:
             if self._provider_factory is None:
                 raise HandlerError(-32020, "provider not available for compaction")

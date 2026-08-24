@@ -40,9 +40,9 @@ jobs:
         run: uv run pytest tests/unit/test_graph_optional_dependency.py -v
 
       - name: Base tests
-        run: uv run pytest tests/ -m "not graph and not integration" -v
+        run: uv run pytest tests/ -m "not graph and not recovery and not integration" -v
 
-  test:
+  graph-memory:
     runs-on: ubuntu-latest
 
     steps:
@@ -54,20 +54,61 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
+      - name: Install Graph dependencies
+        run: uv sync --frozen --extra graph --dev
+
+      - name: Verify Graph imports
+        run: uv run python -c "import langgraph; from agent_runtime.core.graph.engine import GraphExecutionEngine"
+
+      - name: Graph memory tests
+        run: uv run pytest tests/ -m "graph and not recovery and not integration" -v
+
+  recovery-sqlite:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install SQLite recovery dependencies
+        run: uv sync --frozen --extra graph-sqlite --dev
+
+      - name: Verify SQLite recovery imports
+        run: |
+          uv run python -c "from agent_runtime.core.graph.engine import GraphExecutionEngine"
+          uv run python -c "from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver"
+
+      - name: SQLite recovery tests
+        run: uv run pytest tests/ -m "recovery and not integration" --strict-markers -v
+
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install all dependencies
         run: uv sync --frozen --all-extras --dev
 
       - name: Ruff
-        run: uv run ruff check src tests scripts examples/graph_offline_demo.py
+        run: uv run ruff check src tests scripts examples
 
       - name: Format check
-        run: uv run ruff format --check src tests scripts examples/graph_offline_demo.py
+        run: uv run ruff format --check src tests scripts examples
 
       - name: Mypy
         run: uv run mypy src
-
-      - name: Tests
-        run: uv run pytest tests/ -v
 
       - name: Wire protocol check
         run: uv run python scripts/check_wire_protocol.py --check

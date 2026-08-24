@@ -17,6 +17,8 @@ from agent_runtime.core.bus.commands import (
     PermissionRespondResult,
     PingCommand,
     PongResult,
+    RunGetStateCommand,
+    RunGetStateResult,
     SessionCloseCommand,
     SessionCloseResult,
     SessionCompactCommand,
@@ -25,6 +27,8 @@ from agent_runtime.core.bus.commands import (
     SessionCreateResult,
     SessionGetHistoryCommand,
     SessionGetHistoryResult,
+    SessionResumeCommand,
+    SessionResumeResult,
     SessionSendMessageCommand,
     SessionSendMessageResult,
 )
@@ -43,7 +47,9 @@ from agent_runtime.core.bus.events import (
     PermissionGrantedEvent,
     PermissionRequestedEvent,
     RunFinishedEvent,
+    RunResumedEvent,
     RunStartedEvent,
+    RunSuspendedEvent,
     SessionClosedEvent,
     SessionCreatedEvent,
     SessionMessageReceivedEvent,
@@ -150,6 +156,7 @@ def generate() -> str:
             "topics": ["run.*", "step.*", "tool.*", "llm.token"],
             "scope": "global",
             "replay_from_run": None,
+            "after_event_seq": 0,
         },
     }
     subscribe_resp_example = {
@@ -167,7 +174,11 @@ def generate() -> str:
     session_create_resp_example = {
         "jsonrpc": "2.0",
         "id": "u-4",
-        "result": {"session_id": session_id, "status": "active"},
+        "result": {
+            "session_id": session_id,
+            "status": "active",
+            "resume_token": "<opaque-resume-capability>",
+        },
     }
     session_send_req_example = {
         "jsonrpc": "2.0",
@@ -180,26 +191,83 @@ def generate() -> str:
         "id": "u-5",
         "result": {"run_id": run_id},
     }
-    permission_respond_req_example = {
+    session_resume_req_example = {
         "jsonrpc": "2.0",
         "id": "u-6",
+        "method": "session.resume",
+        "params": {
+            "session_id": session_id,
+            "resume_token": "<opaque-resume-capability>",
+            "expected_revision": "checkpoint-revision-7",
+        },
+    }
+    session_resume_resp_example = {
+        "jsonrpc": "2.0",
+        "id": "u-6",
+        "result": {
+            "session_id": session_id,
+            "run_id": run_id,
+            "status": "suspended",
+            "suspension_reason": "permission",
+            "checkpoint_revision": "checkpoint-revision-7",
+            "event_seq": 8,
+            "next_resume_token": "<rotated-resume-capability>",
+        },
+    }
+    run_get_state_req_example = {
+        "jsonrpc": "2.0",
+        "id": "u-7",
+        "method": "run.get_state",
+        "params": {"session_id": session_id, "run_id": run_id},
+    }
+    run_get_state_resp_example = {
+        "jsonrpc": "2.0",
+        "id": "u-7",
+        "result": {
+            "session_id": session_id,
+            "run_id": run_id,
+            "status": "suspended",
+            "current_node": "kit_tools",
+            "next_node": "kit_tools",
+            "suspension_reason": "permission",
+            "checkpoint_revision": "checkpoint-revision-7",
+            "event_seq": 8,
+            "pending_approval_summary": {
+                "tool_use_id": "toolu_03",
+                "tool_name": "bash",
+                "param_preview": "command='git status --short'",
+                "interrupt_id": "interrupt-7",
+            },
+            "resumable": True,
+        },
+    }
+    permission_respond_req_example = {
+        "jsonrpc": "2.0",
+        "id": "u-8",
         "method": "permission.respond",
-        "params": {"tool_use_id": "toolu_03", "decision": "allow_once"},
+        "params": {
+            "session_id": session_id,
+            "run_id": run_id,
+            "tool_use_id": "toolu_03",
+            "interrupt_id": "interrupt-7",
+            "expected_revision": "checkpoint-revision-7",
+            "decision": "allow_once",
+        },
     }
     permission_respond_resp_example = {
         "jsonrpc": "2.0",
-        "id": "u-6",
+        "id": "u-8",
         "result": {"ok": True},
     }
     session_compact_req_example = {
         "jsonrpc": "2.0",
-        "id": "u-7",
+        "id": "u-9",
         "method": "session.compact",
         "params": {"session_id": session_id, "focus": "保留当前任务和工具结果"},
     }
     session_compact_resp_example = {
         "jsonrpc": "2.0",
-        "id": "u-7",
+        "id": "u-9",
         "result": {"summary_tokens": 1800, "saved_tokens": 10200},
     }
     event_push_example = {
@@ -255,6 +323,30 @@ def generate() -> str:
         _model_section("SessionCloseResult", SessionCloseResult),
         "\n",
         _model_section(
+            "SessionResumeCommand",
+            SessionResumeCommand,
+            session_resume_req_example,
+        ),
+        "\n",
+        _model_section(
+            "SessionResumeResult",
+            SessionResumeResult,
+            session_resume_resp_example,
+        ),
+        "\n",
+        _model_section(
+            "RunGetStateCommand",
+            RunGetStateCommand,
+            run_get_state_req_example,
+        ),
+        "\n",
+        _model_section(
+            "RunGetStateResult",
+            RunGetStateResult,
+            run_get_state_resp_example,
+        ),
+        "\n",
+        _model_section(
             "PermissionRespondCommand",
             PermissionRespondCommand,
             permission_respond_req_example,
@@ -286,10 +378,10 @@ def generate() -> str:
         "\n## Run Events\n\n",
         "Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients. "
         "Run-scoped payloads preserve their existing `type` and fields while adding optional "
-        "`correlation_id`, `session_id`, and `node_id` metadata. `correlation_id` identifies the "
-        "root run across child runs, `session_id` is populated only when a session exists, and "
-        "`node_id` is populated only for a real engine node. Older payloads without these fields "
-        "remain valid.\n\n",
+        "`correlation_id`, `session_id`, `node_id`, and `event_seq` metadata. `correlation_id` "
+        "identifies the root run across child runs, `session_id` is populated only when a "
+        "session exists, `node_id` only for a real engine node, and `event_seq` is the durable "
+        "per-run cursor. Older payloads without these fields remain valid.\n\n",
         "`llm.reasoning`, `node.*`, and `state.diff` are typed boundaries reserved for engines "
         "that produce those facts. The default loop engine does not synthesize them.\n\n",
         _model_section(
@@ -315,6 +407,36 @@ def generate() -> str:
                 status="success",
                 reason=None,
                 steps=2,
+            ),
+        ),
+        "\n",
+        _model_section(
+            "RunSuspendedEvent",
+            RunSuspendedEvent,
+            _run_event_example(
+                "run.suspended",
+                run_id,
+                ts,
+                session_id=session_id,
+                reason="permission",
+                checkpoint_revision="checkpoint-revision-7",
+                interrupt_id="interrupt-7",
+                event_seq=8,
+            ),
+        ),
+        "\n",
+        _model_section(
+            "RunResumedEvent",
+            RunResumedEvent,
+            _run_event_example(
+                "run.resumed",
+                run_id,
+                ts,
+                session_id=session_id,
+                checkpoint_revision="checkpoint-revision-7",
+                resume_epoch=1,
+                interrupt_id="interrupt-7",
+                event_seq=9,
             ),
         ),
         "\n",

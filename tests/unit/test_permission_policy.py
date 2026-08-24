@@ -178,3 +178,16 @@ def test_param_preview_truncates_long_value() -> None:
     preview = param_preview("bash", {"command": long_cmd})
     assert len(preview) <= 75  # key='<60 chars>…' overhead ~11 chars
     assert "…" in preview
+
+
+def test_param_preview_redacts_credentials_before_checkpointing() -> None:
+    preview = param_preview(
+        "bash",
+        {"command": "curl -H 'Authorization: Bearer SECRET-TOKEN' example.test"},
+    )
+    fallback = param_preview("custom", {"api_key": "SECRET-KEY", "value": "safe"})
+
+    assert "SECRET-TOKEN" not in preview
+    assert "SECRET-KEY" not in fallback
+    assert "[REDACTED]" in preview
+    assert "[REDACTED]" in fallback

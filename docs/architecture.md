@@ -21,23 +21,27 @@ clients that send JSON-RPC commands and subscribe to event streams.
 
 `agent.engine` (or `AGENTRT_ENGINE`) selects `loop` or `graph`; the default is
 `loop`, so existing CLI, TUI, daemon, and Quick Start commands need no new
-argument or dependency. Selecting `graph` lazily loads the optional P1 engine;
+argument or dependency. Selecting `graph` lazily loads the optional Graph engine;
 when the Graph extra is absent, the runner produces a typed
-`engine_unavailable` outcome and terminal event before provider startup.
+`engine_unavailable` outcome and terminal event before provider startup. The
+Graph checkpoint backend independently defaults to `memory`; `sqlite` requires
+the `graph-sqlite` extra and is also validated before provider construction.
 
 An engine receives the existing `ExecutionContext`, `ToolRegistry`, `EventBus`,
 and run-scoped options. It updates that exact context in place and returns the
-equivalent `RunOutcome`, which keeps terminal events and session persistence on
+equivalent `RunOutcome` or, for a durable non-terminal boundary, a
+`RunSuspension`. Both keep events and session persistence coordinated through
 one canonical state object.
 
 | Operation | Loop engine | Graph engine |
 | --- | --- | --- |
 | `run` | Delegates to `AgentLoop` | Runs `START -> model <-> kit_tools -> END` |
-| `resume` | Typed `resume_unsupported` | Typed `resume_unsupported`; P1 checkpoints are process-local conversation state |
+| `resume` | Typed `resume_unsupported` | Memory: typed unsupported; SQLite: latest-checkpoint continuation with the original run ID |
 | `cancel` | Cancels the active loop task | Cancels model, tool, or permission waits and propagates to the runner |
 
-This remains an internal engine contract: P1 adds no user-callable `run.cancel`
-IPC command and no persistent run-resume behavior.
+This remains an internal engine contract: there is no user-callable `run.cancel`
+IPC command. Durable ownership transfer is exposed only through capability-bound
+`session.resume`, and redacted inspection through `run.get_state`.
 
 ## Graph State and Lifecycle
 
@@ -47,24 +51,29 @@ message dictionaries, tool registry, permission manager, event bus, and
 messages, pending calls, bounded results/errors/trace metadata, counts, and
 terminal fields; runtime handles never enter checkpoints.
 
-`SessionStore.thread.jsonl` remains the transcript authority. The process-local
-`InMemorySaver` is a cache: a first run seeds the full transcript, an exact
-checkpoint prefix receives only the new suffix, and a mismatch deletes and
-reseeds the thread. This preserves repeated real messages without content-based
-deduplication.
+`SessionStore.thread.jsonl` remains the transcript authority. With the memory
+backend, `InMemorySaver` is a process-local cache: a first run seeds the full
+transcript, an exact checkpoint prefix receives only the new suffix, and a
+mismatch may delete and reseed the thread when no unfinished run exists. With
+SQLite, an unfinished checkpoint is authoritative for orchestration; a transcript
+prefix mismatch is a typed conflict so recovery cannot silently repeat work.
 
 One lazily initialized `GraphRuntime` belongs to each `CoreApp` and is shared by
 the per-message runners created by that app. Chat sessions map
 `thread_id=session_id` and retain state until close; one-shot and direct runs map
 `thread_id=run_id` and delete it at the terminal boundary. Disconnect and
-shutdown cancel and await work before clearing owned threads. Separate app
-instances never share saver state. See [Optional LangGraph Engine](graph-engine.md)
-for the full reconciliation, budget, and cleanup contracts.
+shutdown cancel and await work before clearing owned memory threads. SQLite
+runtime close retains suspended checkpoints and closes the official saver
+connection. Separate data roots have separate checkpoint, recovery, session,
+event, permission, and journal state. See [Optional LangGraph Engine](graph-engine.md)
+and [Durable Graph Recovery](durable-recovery.md) for the reconciliation, budget,
+capability, and cleanup contracts.
 
 ## Run Event Contract
 
 Existing wire event type names and field meanings remain intact. Run-scoped
-events now share optional `correlation_id`, `session_id`, and `node_id` fields.
+events now share optional `correlation_id`, `session_id`, `node_id`, and
+`event_seq` fields.
 For root runs, `correlation_id` is the root `run_id`; child-agent events inherit
 it, session-backed runs propagate their session ID, and the loop engine leaves
 `node_id` unset. Separate runs use scoped buses, and every `EventWriter` filters
@@ -86,20 +95,24 @@ Graph node or state-diff events.
 
 ## Why Daemon First
 
-The daemon owns execution state and binds each live session to the connection
-that created it. Live run, model, tool, permission, and session events are
-delivered only to that owner. Disconnecting cancels the connection's pending
-approvals, root work, and background subagents so execution cannot continue
-without an approving client. A reconnect may use a new strong run ID to replay
-read-only history, but it does not reattach the live session or transfer its
-command and approval authority.
+The daemon owns execution state and binds each live session to one connection.
+Live run, model, tool, permission, and session events are delivered to the
+committed owner. During a capability-validated `session.resume`, they may also be
+buffered for that session's exclusive provisional connection so recovery cannot
+lose its terminal event; the reservation does not authorize history, send,
+compact, close, state, or approval commands. Disconnecting an active run cancels
+its pending approvals, root work, and background subagents. A suspended durable
+chat is evicted from memory but keeps its checkpoint and hashed capability. A
+later client can consume and rotate the capability through `session.resume`;
+possession of a session ID alone never transfers command or approval authority.
 
 ## Key Modules
 
 - `core/app.py`: daemon lifecycle and command registration.
 - `core/runner.py`: run assembly and dependency wiring.
 - `core/engine/`: execution protocol, loop adapter, and lazy engine router.
-- `core/graph/`: P1 state graph, nodes, event bridge, and app-scoped runtime.
+- `core/graph/`: state graph, nodes, event bridge, memory/SQLite runtime,
+  RecoveryStore, native interrupts, strict event log, and tool journal.
 - `core/loop.py`: LLM/tool execution loop.
 - `core/bus/`: typed command, event, and JSON-RPC envelope models.
 - `core/transport/`: socket server, socket client, and event broadcasting.

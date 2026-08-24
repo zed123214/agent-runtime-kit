@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent_runtime.core.bus.events import StepFinishedEvent
@@ -11,6 +12,7 @@ from agent_runtime.core.tools.invocation import invoke_tool
 from agent_runtime.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from agent_runtime.core.graph.recovery import RecoveryStore
     from agent_runtime.core.permissions.manager import PermissionManager
 
 _MAX_TOKENS_RESULT = (
@@ -60,7 +62,10 @@ class KitToolNode:
         registry: ToolRegistry,
         *,
         permission_manager: PermissionManager | None = None,
+        recovery_store: RecoveryStore | None = None,
+        durable: bool = False,
         session_id: str = "",
+        forced_permission_tool_use_id: str | None = None,
         tool_call_budget: int = 64,
         max_steps: int,
     ) -> None:
@@ -70,7 +75,10 @@ class KitToolNode:
             raise ValueError("max_steps must be positive")
         self._registry = registry
         self._permission_manager = permission_manager
+        self._recovery_store = recovery_store
+        self._durable = durable
         self._session_id = session_id
+        self._forced_permission_tool_use_id = forced_permission_tool_use_id
         self._tool_call_budget = tool_call_budget
         self._max_steps = max_steps
 
@@ -112,13 +120,27 @@ class KitToolNode:
                 # Count a root call exactly once when it is submitted. Retries remain
                 # an implementation detail inside invoke_tool.
                 tool_count += 1
+                durable_permission = None
+                if self._durable:
+                    from agent_runtime.core.graph.interrupts import check_durable_permission
+
+                    durable_permission = partial(
+                        check_durable_permission,
+                        self._permission_manager,
+                        call,
+                        session_id=self._session_id,
+                        run_id=state["run_id"],
+                        force_interrupt=call.id == self._forced_permission_tool_use_id,
+                    )
                 result = await invoke_tool(
                     self._registry,
                     call,
                     node_bus,
                     state["run_id"],
-                    permission_manager=self._permission_manager,
+                    permission_manager=(None if self._durable else self._permission_manager),
                     session_id=self._session_id,
+                    recovery_store=self._recovery_store,
+                    durable_permission=durable_permission,
                 )
                 blocks.append(_result_block(call, result.content, is_error=result.is_error))
                 if result.is_error:

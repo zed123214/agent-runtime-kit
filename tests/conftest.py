@@ -6,7 +6,9 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 
@@ -20,15 +22,22 @@ def free_port() -> int:
 
 
 @pytest.fixture
-async def running_daemon(free_port: int) -> AsyncGenerator[subprocess.Popen[bytes], None]:
+async def running_daemon(
+    free_port: int,
+    tmp_path: Path,
+) -> AsyncGenerator[subprocess.Popen[bytes], None]:
     env = os.environ.copy()
     env["AGENTRT_PORT"] = str(free_port)
+    env["AGENTRT_DATA_ROOT"] = str(tmp_path / f"agentrt-daemon-{uuid.uuid4().hex}")
     env["AGENTRT_LOG_FILE"] = ""
     env["AGENTRT_LOG_LEVEL"] = "WARNING"
+    env["ANTHROPIC_API_KEY"] = ""
 
     proc = subprocess.Popen([sys.executable, "-m", "agent_runtime.core"], env=env)
 
-    deadline = time.monotonic() + 3.0
+    # A cold isolated Windows interpreter can spend more than five seconds in
+    # imports before the daemon binds. Readiness is still probed, not slept.
+    deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
         await asyncio.sleep(0.05)
         try:
@@ -41,7 +50,7 @@ async def running_daemon(free_port: int) -> AsyncGenerator[subprocess.Popen[byte
     else:
         proc.terminate()
         proc.wait()
-        pytest.fail("Daemon did not start within 3 seconds")
+        pytest.fail("Daemon did not start within 20 seconds")
 
     yield proc
 

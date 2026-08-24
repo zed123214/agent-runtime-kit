@@ -6,7 +6,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,7 @@ def _now() -> str:
 class _PendingRequest:
     future: asyncio.Future[str]
     session_id: str
+    run_id: str
     tool_name: str
 
 
@@ -43,8 +44,8 @@ class PermissionManager:
         timeout_s: float = 60.0,
     ) -> None:
         self._policies: dict[str, ToolPolicy] = policies or dict(DEFAULT_POLICIES)
-        # (session_id, tool_use_id) → pending Future + metadata
-        self._pending: dict[tuple[str, str], _PendingRequest] = {}
+        # (session_id, run_id, tool_use_id) → pending Future + metadata
+        self._pending: dict[tuple[str, str, str], _PendingRequest] = {}
         # (session_id, tool_name) → "allow" | "deny"（session 内存，重启丢失）
         self._session_always: dict[tuple[str, str], str] = {}
         # tool_name → "allow" | "deny"（持久化，从 policy_file 加载）
@@ -62,15 +63,29 @@ class PermissionManager:
         policy = self._policies.get(tool_name)
         return evaluate(tool_name, params, policy)
 
-    # 检查权限；如需 ask 则向客户端发事件并等待响应；返回 (allowed, decision_str)
-    async def check_and_wait(
+    def evaluate_durable(
         self,
-        tool_use_id: str,
         tool_name: str,
         params: dict[str, Any],
         session_id: str,
-        event_emitter: Callable[[dict[str, Any]], Awaitable[None]],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool | None, str]:
+        """Evaluate every policy/cache tier without creating an in-memory waiter."""
+
+        return self._evaluate_without_prompt(tool_name, params, session_id)
+
+    def durable_expires_at(self) -> str | None:
+        """Return the deadline persisted with a durable ASK interrupt."""
+
+        if self._timeout_s <= 0:
+            return None
+        return (datetime.datetime.now(UTC) + timedelta(seconds=self._timeout_s)).isoformat()
+
+    def _evaluate_without_prompt(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        session_id: str,
+    ) -> tuple[bool | None, str]:
         command = str(params.get("command", "")) if tool_name == "bash" else ""
         policy = self._policies.get(tool_name)
 
@@ -83,43 +98,57 @@ class PermissionManager:
 
         # Tier 2: OUTSIDE_CWD_HEURISTICS（bash only，强制 ASK，不可被任何缓存绕过）
         outside_cwd = bool(command and matches_outside_cwd(command))
+        if outside_cwd:
+            return None, "ask"
 
-        if not outside_cwd:
-            # Tier 3: session always 缓存
-            session_key = (session_id, tool_name)
-            if session_key in self._session_always:
-                cached = self._session_always[session_key]
-                logger.debug("permission: session cache hit tool=%s decision=%s", tool_name, cached)
-                return cached == "allow", f"auto_{cached}"
+        # Tier 3: session always 缓存
+        session_key = (session_id, tool_name)
+        if session_key in self._session_always:
+            cached = self._session_always[session_key]
+            logger.debug("permission: session cache hit tool=%s decision=%s", tool_name, cached)
+            return cached == "allow", f"auto_{cached}"
 
-            # Tier 4: persistent always（跨 session）
-            if tool_name in self._persistent_always:
-                cached = self._persistent_always[tool_name]
-                logger.debug(
-                    "permission: persistent cache hit tool=%s decision=%s", tool_name, cached
-                )
-                return cached == "allow", f"auto_{cached}"
+        # Tier 4: persistent always（跨 session）
+        if tool_name in self._persistent_always:
+            cached = self._persistent_always[tool_name]
+            logger.debug("permission: persistent cache hit tool=%s decision=%s", tool_name, cached)
+            return cached == "allow", f"auto_{cached}"
 
-            # Tier 5: allow_patterns（bash only）
-            if command and policy:
-                for pat in policy.allow_patterns:
-                    if re.search(pat, command):
-                        return True, "auto_allow"
-
-            # Tier 6: tool default
-            if policy is not None:
-                if policy.default == PermissionDecision.ALLOW:
+        # Tier 5: allow_patterns（bash only）
+        if command and policy:
+            for pat in policy.allow_patterns:
+                if re.search(pat, command):
                     return True, "auto_allow"
-                if policy.default == PermissionDecision.DENY:
-                    return False, "auto_deny"
-            # default == ASK（bash、unknown tool）→ fall through to Future
+
+        # Tier 6: tool default
+        if policy is not None:
+            if policy.default == PermissionDecision.ALLOW:
+                return True, "auto_allow"
+            if policy.default == PermissionDecision.DENY:
+                return False, "auto_deny"
+        return None, "ask"
+
+    # 检查权限；如需 ask 则向客户端发事件并等待响应；返回 (allowed, decision_str)
+    async def check_and_wait(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        params: dict[str, Any],
+        session_id: str,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]],
+        run_id: str = "",
+    ) -> tuple[bool, str]:
+        allowed, decision = self._evaluate_without_prompt(tool_name, params, session_id)
+        if allowed is not None:
+            return allowed, decision
 
         # ASK 路径（来自 OUTSIDE_CWD 强制 ASK，或 default=ASK）
-        pending_key = (session_id, tool_use_id)
+        pending_key = (session_id, run_id, tool_use_id)
         if pending_key in self._pending:
             logger.warning(
-                "permission: duplicate pending session_id=%s tool_use_id=%s",
+                "permission: duplicate pending session_id=%s run_id=%s tool_use_id=%s",
                 session_id,
+                run_id,
                 tool_use_id,
             )
             return False, "duplicate_tool_use_id"
@@ -128,6 +157,7 @@ class PermissionManager:
         request = _PendingRequest(
             future=future,
             session_id=session_id,
+            run_id=run_id,
             tool_name=tool_name,
         )
         self._pending[pending_key] = request
@@ -165,29 +195,57 @@ class PermissionManager:
         decision: str,
         *,
         authorized_session_ids: Collection[str],
+        session_id: str | None = None,
+        run_id: str | None = None,
     ) -> bool:
-        matching_keys = [key for key in self._pending if key[1] == tool_use_id]
-        if not matching_keys:
-            logger.warning("permission.respond: unknown tool_use_id=%s", tool_use_id)
+        if (session_id is None) != (run_id is None):
+            logger.warning("permission.respond: session_id and run_id must be provided together")
             return False
-        authorized_keys = [key for key in matching_keys if key[0] in authorized_session_ids]
-        if not authorized_keys:
-            logger.warning("permission.respond: request is not owned by this connection")
-            return False
-        if len(authorized_keys) > 1:
+
+        if session_id is not None and run_id is not None:
+            if session_id not in authorized_session_ids:
+                logger.warning("permission.respond: request is not owned by this connection")
+                return False
+            pending_key = (session_id, run_id, tool_use_id)
+            if pending_key not in self._pending:
+                logger.warning(
+                    "permission.respond: unknown session_id=%s run_id=%s tool_use_id=%s",
+                    session_id,
+                    run_id,
+                    tool_use_id,
+                )
+                return False
+        else:
+            authorized_keys = [
+                key
+                for key in self._pending
+                if key[2] == tool_use_id and key[0] in authorized_session_ids
+            ]
+            if not authorized_keys:
+                logger.warning("permission.respond: unknown or unowned tool_use_id=%s", tool_use_id)
+                return False
+            if len(authorized_keys) > 1:
+                logger.warning(
+                    "permission.respond: ambiguous tool_use_id=%s across authorized runs",
+                    tool_use_id,
+                )
+                return False
+            pending_key = authorized_keys[0]
+
+        req = self._pending.pop(pending_key)
+        if req.future.done():
             logger.warning(
-                "permission.respond: ambiguous tool_use_id=%s across authorized sessions",
+                "permission.respond: request already resolved tool_use_id=%s",
                 tool_use_id,
             )
             return False
-        pending_key = authorized_keys[0]
-        req = self._pending.pop(pending_key)
-        if not req.future.done():
-            req.future.set_result(decision)
-            return True
-        return False
+        req.future.set_result(decision)
+        return True
 
     # 应用审批决策，更新 session + persistent 缓存，返回是否放行
+    def apply_durable_response(self, decision: str, session_id: str, tool_name: str) -> bool:
+        return self._apply_response(decision, session_id, tool_name)
+
     def _apply_response(self, decision: str, session_id: str, tool_name: str) -> bool:
         allow = decision in ("allow_once", "always_allow")
         if decision == "always_allow":
@@ -237,8 +295,9 @@ class PermissionManager:
             req = self._pending.pop(key)
             if not req.future.done():
                 logger.debug(
-                    "permission: cancel pending tool_use_id=%s reason=%s",
+                    "permission: cancel pending run_id=%s tool_use_id=%s reason=%s",
                     key[1],
+                    key[2],
                     reason,
                 )
                 req.future.set_result("deny_once")
