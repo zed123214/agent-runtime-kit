@@ -29,7 +29,7 @@ graph TD
     User((开发者)) --> CLI["agentrt CLI"]
     User --> TUI["agentrt-tui"]
 
-    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core daemon"]
+    CLI -->|JSON-RPC 2.0 | Core["agentrt-core daemon"]
     TUI -->|订阅 / 回放事件| Core
 
     subgraph Runtime["Agent Runtime"]
