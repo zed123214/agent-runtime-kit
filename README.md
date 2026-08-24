@@ -28,8 +28,7 @@ Agent Runtime Kit 使用 Python 实现这些 Agent Runtime 基础能力。当前
 graph TD
     User((开发者)) --> CLI["agentrt CLI"]
     User --> TUI["agentrt-tui"]
-
-    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core (Runtime Core)"]
+    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core daemon (Runtime Core)"]
     TUI -->|订阅 / 回放事件| Core
 
     subgraph Runtime["Agent Runtime"]
