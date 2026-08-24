@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -17,8 +16,6 @@ type WrappedNode = Callable[[RuntimeState], Awaitable[StateUpdate]]
 _DIFF_FIELD_LIMIT = 32
 _REASON_LIMIT = 128
 _CANCEL_PUBLISH_GRACE_S = 0.25
-
-log = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -71,6 +68,7 @@ class NodeEventBridge:
         loop = asyncio.get_running_loop()
         cancel_deadline: float | None = None
         cancelled_while_waiting = False
+        cancellation_sent = False
 
         while not task.done():
             timeout = None if cancel_deadline is None else max(0.0, cancel_deadline - loop.time())
@@ -78,17 +76,18 @@ class NodeEventBridge:
                 done, _pending = await asyncio.wait({task}, timeout=timeout)
             except asyncio.CancelledError:
                 cancelled_while_waiting = True
-                if cancel_deadline is None:
+                task.cancel()
+                if not cancellation_sent:
                     cancel_deadline = loop.time() + self._cancel_publish_grace_s
-                    task.cancel()
+                    cancellation_sent = True
                 continue
             if not done:
-                # A subscriber may swallow the first cancellation. Send one final
-                # cancellation before detaching so ordinary cancellable sinks
-                # cannot resume and emit a stale node event after run.finished.
+                # A cooperative subscriber may consume one cancellation while
+                # unwinding. Send another signal, then keep the publisher owned
+                # until it actually exits; detaching here would permit a stale
+                # node event to surface after run.finished.
                 task.cancel()
-                self._detach_publisher(task, node_id=node_id, event_type="node.started")
-                return cancelled_while_waiting, None
+                cancel_deadline = None
 
         try:
             task.result()
@@ -139,6 +138,7 @@ class NodeEventBridge:
             loop.time() + self._cancel_publish_grace_s if cancellation_already_pending else None
         )
         cancelled_while_waiting = cancellation_already_pending
+        cancellation_sent = False
 
         while not task.done():
             timeout = None if cancel_deadline is None else max(0.0, cancel_deadline - loop.time())
@@ -146,50 +146,26 @@ class NodeEventBridge:
                 done, _pending = await asyncio.wait({task}, timeout=timeout)
             except asyncio.CancelledError:
                 cancelled_while_waiting = True
-                if cancel_deadline is None:
+                if cancellation_sent:
+                    task.cancel()
+                elif cancel_deadline is None:
                     cancel_deadline = loop.time() + self._cancel_publish_grace_s
                 continue
             if not done:
                 # EventWriter is the first run-bus subscriber, so the authoritative
                 # JSONL has already observed the event before a later sink can
                 # block. Cancel the remaining fan-out to prevent a stale event from
-                # surfacing after run.finished. Detach only as a last resort for a
-                # subscriber that suppresses cancellation itself.
+                # surfacing after run.finished. The publisher remains owned until
+                # every trusted internal subscriber has actually exited.
                 task.cancel()
-                self._detach_publisher(task, node_id=node_id, event_type=event_type)
-                return cancelled_while_waiting, None
+                cancellation_sent = True
+                cancel_deadline = None
 
         try:
             task.result()
         except BaseException as exc:
             return cancelled_while_waiting, exc
         return cancelled_while_waiting, None
-
-    def _detach_publisher(
-        self,
-        task: asyncio.Task[None],
-        *,
-        node_id: str,
-        event_type: str,
-    ) -> None:
-        """Detach one cancellation-delayed publisher and consume its eventual result."""
-
-        task.add_done_callback(self._consume_detached_result)
-        log.warning(
-            "%s publish exceeded cancellation grace run_id=%s node_id=%s",
-            event_type,
-            self._run_id,
-            node_id,
-        )
-
-    @staticmethod
-    def _consume_detached_result(task: asyncio.Task[None]) -> None:
-        """Retrieve a detached publisher result without extending run lifetime."""
-
-        try:
-            task.result()
-        except BaseException:
-            pass
 
     def _with_trace(
         self,

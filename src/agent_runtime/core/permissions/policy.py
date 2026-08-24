@@ -57,17 +57,48 @@ _PREVIEW_KEY: dict[str, str] = {
     "note_save": "content",
 }
 _PREVIEW_MAX = 60
+_SENSITIVE_PREVIEW_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "password",
+        "resume_token",
+        "secret",
+    }
+)
+_SENSITIVE_PREVIEW_RE = re.compile(
+    r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)"
+    r"(\s*[:=]\s*)(?:bearer\s+)?([^\s,'\"}]+)"
+)
+
+
+def _redact_preview(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]"
+            if str(key).casefold() in _SENSITIVE_PREVIEW_KEYS
+            else _redact_preview(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_preview(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_preview(item) for item in value)
+    if isinstance(value, str):
+        return _SENSITIVE_PREVIEW_RE.sub(r"\1\2[REDACTED]", value)
+    return value
 
 
 # 为权限审批事件生成人类可读的参数摘要
 def param_preview(tool_name: str, params: dict[str, Any]) -> str:
     key = _PREVIEW_KEY.get(tool_name)
     if key and key in params:
-        val = str(params[key])
+        val = str(_redact_preview(params[key]))
         if len(val) > _PREVIEW_MAX:
             val = val[:_PREVIEW_MAX] + "…"
         return f"{key}={val!r}"
-    snippet = str(params)
+    snippet = str(_redact_preview(params))
     return snippet[:_PREVIEW_MAX] if len(snippet) > _PREVIEW_MAX else snippet
 
 

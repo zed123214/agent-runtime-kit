@@ -2,24 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Coroutine
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from agent_runtime.core.bus.events import RunFinishedEvent, RunStartedEvent
+from agent_runtime.core.bus.events import (
+    RunFinishedEvent,
+    RunResumedEvent,
+    RunStartedEvent,
+    RunSuspendedEvent,
+)
 from agent_runtime.core.compact.compactor import Compactor
 from agent_runtime.core.config import RuntimeConfig
 from agent_runtime.core.context import ExecutionContext, TerminalStatus
 from agent_runtime.core.engine.base import (
     EngineErrorDetail,
     EngineRunConfig,
+    EngineRunResult,
     ExecutionEngineConfigurationError,
     ExecutionEngineContractError,
     ExecutionEngineError,
     RunOutcome,
+    RunSuspension,
 )
 from agent_runtime.core.engine.router import EngineResolver, EngineRouter
 from agent_runtime.core.events.bus import EventBus, EventHandler
 from agent_runtime.core.events.writer import EventWriter
+from agent_runtime.core.graph.event_log import read_event_log
+from agent_runtime.core.graph.recovery import RecoveryStore
 from agent_runtime.core.llm.base import LLMProvider
 from agent_runtime.core.llm.provider import AnthropicProvider
 from agent_runtime.core.mcp.server import McpServerManager
@@ -27,10 +39,11 @@ from agent_runtime.core.memory.loader import load_context_file
 from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
 from agent_runtime.core.session.model import Session
-from agent_runtime.core.session.store import SessionStore
+from agent_runtime.core.session.store import SessionStore, TranscriptConflictError
 from agent_runtime.core.subagent.registry import BackgroundTaskRegistry
 from agent_runtime.core.subagent.tool import AgentResultTool, SpawnAgentTool
 from agent_runtime.core.task.manager import TaskManager
+from agent_runtime.core.tools.base import BaseTool
 from agent_runtime.core.tools.builtin import (
     BashTool,
     ListDirTool,
@@ -61,6 +74,20 @@ def _terminal_status(status: str) -> TerminalStatus | None:
     return None
 
 
+async def _finish_despite_cancellation(operation: Coroutine[Any, Any, None]) -> bool:
+    """Finish terminal cleanup even if the owning task is cancelled again."""
+
+    task = asyncio.create_task(operation)
+    cancelled_while_waiting = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled_while_waiting = True
+    task.result()
+    return cancelled_while_waiting
+
+
 class AgentRunner:
     # 组装所有运行时依赖，准备执行一次完整的 agent run
     def __init__(
@@ -75,16 +102,22 @@ class AgentRunner:
         permission_manager: PermissionManager | None = None,
         mcp_manager: McpServerManager | None = None,
         engine_resolver: EngineResolver | None = None,
+        recovery_store: RecoveryStore | None = None,
+        extra_tools: list[BaseTool] | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
         self._provider = provider
+        # Internal extensions are trusted to finish promptly and cooperate with
+        # cancellation; the runtime does not attempt to kill arbitrary coroutines.
         self._extra_handlers: list[EventHandler] = extra_handlers or []
         self._runs_dir = runs_dir or RUNS_DIR
         self._trace = trace
         self._permission_manager = permission_manager
         self._mcp_manager = mcp_manager
         self._engine_resolver = engine_resolver if engine_resolver is not None else EngineRouter()
+        self._recovery_store = recovery_store
+        self._extra_tools = list(extra_tools or [])
         # 跨 run 共享的后台 subagent 任务注册表
         self._task_registry = BackgroundTaskRegistry()
 
@@ -145,11 +178,103 @@ class AgentRunner:
             for mcp_tool in self._mcp_manager.get_tools():
                 if _ok(mcp_tool.name):
                     registry.register(mcp_tool)
+        for extra_tool in self._extra_tools:
+            if _ok(extra_tool.name):
+                registry.register(extra_tool)
         return registry
 
     # 执行一次完整的 agent run（委托给 run_and_capture，忽略返回值）
     async def run(self, goal: str, *, run_id: str | None = None) -> None:
         await self.run_and_capture(goal, run_id=run_id)
+
+    async def close_suspended(
+        self,
+        *,
+        session: Session,
+        store: SessionStore,
+        run_id: str,
+        checkpoint_revision: str,
+        resume_epoch: int,
+    ) -> RunOutcome:
+        """Close one durable suspended run without re-entering a Graph node."""
+
+        if self._recovery_store is None:
+            raise RuntimeError("close_suspended requires a RecoveryStore")
+        recovery_store = self._recovery_store
+        event_path = store.runs_dir(session.id) / run_id / "events.jsonl"
+        snapshot = read_event_log(event_path, repair_tail=True)
+        terminal_rows = [
+            event
+            for event in snapshot.events
+            if event.get("run_id") == run_id and event.get("type") == "run.finished"
+        ]
+        if len(terminal_rows) > 1:
+            raise ExecutionEngineContractError(
+                engine="graph",
+                message=f"Run {run_id!r} has more than one persisted terminal event.",
+            )
+        terminal_status: TerminalStatus = "failed"
+        terminal_reason: str | None = "session_closed"
+        terminal_steps = 0
+        if terminal_rows:
+            row = terminal_rows[0]
+            raw_status = row.get("status")
+            if raw_status not in ("success", "failed"):
+                raise ExecutionEngineContractError(
+                    engine="graph",
+                    message=f"Run {run_id!r} has an invalid persisted terminal status.",
+                )
+            terminal_status = raw_status
+            raw_reason = row.get("reason")
+            terminal_reason = raw_reason if isinstance(raw_reason, str) else None
+            raw_steps = row.get("steps")
+            terminal_steps = raw_steps if isinstance(raw_steps, int) else 0
+
+        bus = EventBus(correlation_id=run_id, session_id=session.id)
+        async with EventWriter(event_path, run_id=run_id) as writer:
+            writer.subscribe(bus)
+            if self._bus is not None:
+                bus.subscribe(self._bus.publish)
+            for handler in self._extra_handlers:
+                bus.subscribe(handler)
+
+            async def finish_close() -> None:
+                await recovery_store.mark_started_tools_outcome_unknown(
+                    session.id,
+                    run_id,
+                )
+                if not terminal_rows:
+                    await bus.publish(
+                        RunFinishedEvent(
+                            run_id=run_id,
+                            status="failed",
+                            reason="session_closed",
+                            steps=terminal_steps,
+                            ts=_now(),
+                        )
+                    )
+                await writer.__aexit__(None, None, None)
+                transcript = store.transcript_commit(session.id, run_id)
+                await recovery_store.mark_run_terminal(
+                    session.id,
+                    run_id,
+                    status=terminal_status,
+                    checkpoint_revision=checkpoint_revision,
+                    event_seq=bus.last_event_seq,
+                    transcript_commit_count=transcript.transcript_commit_count,
+                    transcript_commit_hash=transcript.transcript_commit_hash,
+                    expected_resume_epoch=resume_epoch,
+                )
+
+            cancelled = await _finish_despite_cancellation(finish_close())
+        if cancelled:
+            raise asyncio.CancelledError()
+        return RunOutcome(
+            status=terminal_status,
+            result="",
+            reason=terminal_reason,
+            steps=terminal_steps,
+        )
 
     # 执行 agent run 并返回 RunOutcome（含最终文字结果）
     async def run_and_capture(
@@ -161,17 +286,52 @@ class AgentRunner:
         store: SessionStore | None = None,
         system_prompt_override: str | None = None,
         tool_whitelist: list[str] | None = None,
-    ) -> RunOutcome:
+        resume: bool = False,
+        resume_value: object | None = None,
+        expected_checkpoint_revision: str | None = None,
+        resume_epoch: int = 0,
+    ) -> EngineRunResult:
+        if resume and resume_epoch <= 0:
+            raise ValueError("resume_epoch must be positive for a resumed attempt")
+        if resume and not expected_checkpoint_revision:
+            raise ValueError("expected_checkpoint_revision is required for resume")
+        if not resume and resume_epoch != 0:
+            raise ValueError("a new attempt must start at resume_epoch 0")
         run_id = run_id or new_run_id()
+        durable_recovery = (
+            self._recovery_store is not None and session is not None and session.durable
+        )
+        recovery_store = self._recovery_store if durable_recovery else None
+        committed_run_messages: list[dict[str, Any]] = []
         if session is not None and store is not None:
             run_path = store.runs_dir(session.id) / run_id
-            history = store.read_messages(session.id)
+            history = (
+                store.read_messages_strict(session.id)
+                if durable_recovery
+                else store.read_messages(session.id)
+            )
+            if durable_recovery:
+                committed_run_messages = store.read_run_messages_strict(session.id, run_id)
             notes = store.read_notes(session.id)
         else:
             run_path = self._runs_dir / run_id
             history = [{"role": "user", "content": goal}]
             notes = ""
         run_path.mkdir(parents=True, exist_ok=True)
+        event_path = run_path / "events.jsonl"
+        event_snapshot = read_event_log(event_path, repair_tail=True)
+        lifecycle_types = [
+            str(event.get("type", ""))
+            for event in event_snapshot.events
+            if event.get("run_id") == run_id
+        ]
+        has_started = "run.started" in lifecycle_types
+        has_finished = "run.finished" in lifecycle_types
+        if not resume and has_started:
+            raise ExecutionEngineContractError(
+                engine=self._config.agent.engine,
+                message=f"Run {run_id!r} already has a persisted start event.",
+            )
 
         global_ctx = load_context_file(Path("~/.agentrt/context.md").expanduser())
         project_ctx = load_context_file(Path(".agentrt/context.md"))
@@ -199,7 +359,7 @@ class AgentRunner:
         )
         prefill_len = len(history)
 
-        async with EventWriter(run_path / "events.jsonl", run_id=run_id) as writer:
+        async with EventWriter(event_path, run_id=run_id) as writer:
             # Persist the run-scoped event before forwarding it to external/global
             # subscribers. A slow client must not prevent the authoritative JSONL
             # log from observing a matched Graph node lifecycle.
@@ -208,10 +368,23 @@ class AgentRunner:
                 bus.subscribe(self._bus.publish)
             for h in self._extra_handlers:
                 bus.subscribe(h)
-            await bus.publish(RunStartedEvent(run_id=run_id, goal=goal, ts=_now()))
+            if not has_started:
+                await bus.publish(RunStartedEvent(run_id=run_id, goal=goal, ts=_now()))
+            elif resume and not has_finished:
+                assert expected_checkpoint_revision is not None
+                await bus.publish(
+                    RunResumedEvent(
+                        run_id=run_id,
+                        session_id=session_id_str,
+                        checkpoint_revision=expected_checkpoint_revision,
+                        resume_epoch=resume_epoch,
+                        ts=_now(),
+                    )
+                )
 
             cancelled = False
             engine_outcome: RunOutcome | None = None
+            engine_suspension: RunSuspension | None = None
             engine_error: EngineErrorDetail | None = None
             engine_name: str = self._config.agent.engine
             engine_invocation_started = False
@@ -270,61 +443,88 @@ class AgentRunner:
                 )
                 engine_name = engine.name
                 engine_invocation_started = True
-                engine_outcome = await engine.run(
+                engine_config = EngineRunConfig(
+                    session_id=session_id_str,
+                    thread_id=(
+                        session.id
+                        if session is not None and session.mode == "chat"
+                        else context.run_id
+                    ),
+                    retain_thread=session is not None and session.mode == "chat",
+                    compact_threshold=self._config.compaction.auto_threshold,
+                    recursion_limit=self._config.graph.recursion_limit,
+                    tool_call_budget=self._config.graph.tool_call_budget,
+                    wall_time_s=self._config.graph.wall_time_s,
+                    trace_event_limit=self._config.graph.trace_event_limit,
+                    expected_checkpoint_revision=expected_checkpoint_revision,
+                    resume_value=resume_value,
+                    event_seq=event_snapshot.last_event_seq,
+                    durable_recovery=durable_recovery,
+                )
+                engine_result = await (engine.resume if resume else engine.run)(
                     context,
                     tools=registry,
                     events=bus,
-                    config=EngineRunConfig(
-                        session_id=session_id_str,
-                        thread_id=(
-                            session.id
-                            if session is not None and session.mode == "chat"
-                            else context.run_id
-                        ),
-                        retain_thread=session is not None and session.mode == "chat",
-                        compact_threshold=self._config.compaction.auto_threshold,
-                        recursion_limit=self._config.graph.recursion_limit,
-                        tool_call_budget=self._config.graph.tool_call_budget,
-                        wall_time_s=self._config.graph.wall_time_s,
-                        trace_event_limit=self._config.graph.trace_event_limit,
-                    ),
+                    config=engine_config,
                 )
-                outcome_status = _terminal_status(engine_outcome.status)
-                context_status = _terminal_status(context.status)
-                if outcome_status is None or context_status is None:
-                    raise ExecutionEngineContractError(
-                        engine=engine.name,
-                        message=(
-                            "Execution engine must finish with status 'success' or "
-                            f"'failed'; got outcome.status={engine_outcome.status!r} "
-                            f"and context.status={context.status!r}."
-                        ),
+                if isinstance(engine_result, RunSuspension):
+                    engine_suspension = engine_result
+                    if context.status != "running":
+                        raise ExecutionEngineContractError(
+                            engine=engine.name,
+                            message="A suspended execution must leave its context running.",
+                        )
+                    if engine_result.run_id != run_id or engine_result.session_id != session_id_str:
+                        raise ExecutionEngineContractError(
+                            engine=engine.name,
+                            message="Execution suspension identity does not match the active run.",
+                        )
+                else:
+                    engine_outcome = engine_result
+                    outcome_status = _terminal_status(engine_outcome.status)
+                    context_status = _terminal_status(context.status)
+                    if outcome_status is None or context_status is None:
+                        raise ExecutionEngineContractError(
+                            engine=engine.name,
+                            message=(
+                                "Execution engine must finish with status 'success' or "
+                                f"'failed'; got outcome.status={engine_outcome.status!r} "
+                                f"and context.status={context.status!r}."
+                            ),
+                        )
+                    if engine_outcome.status == "success" and engine_outcome.error is not None:
+                        raise ExecutionEngineContractError(
+                            engine=engine.name,
+                            message="A successful execution-engine outcome cannot carry an error.",
+                        )
+                    canonical_outcome = RunOutcome.from_context(
+                        context,
+                        error=engine_outcome.error,
                     )
-                if engine_outcome.status == "success" and engine_outcome.error is not None:
-                    raise ExecutionEngineContractError(
-                        engine=engine.name,
-                        message="A successful execution-engine outcome cannot carry an error.",
-                    )
-                canonical_outcome = RunOutcome.from_context(
-                    context,
-                    error=engine_outcome.error,
-                )
-                if engine_outcome != canonical_outcome:
-                    raise ExecutionEngineContractError(
-                        engine=engine.name,
-                        message=(
-                            "Execution engine returned an outcome that does not match "
-                            "the canonical ExecutionContext."
-                        ),
-                    )
-                engine_error = engine_outcome.error
+                    if (
+                        engine_outcome.status != canonical_outcome.status
+                        or engine_outcome.result != canonical_outcome.result
+                        or engine_outcome.reason != canonical_outcome.reason
+                        or engine_outcome.steps != canonical_outcome.steps
+                        or engine_outcome.error != canonical_outcome.error
+                    ):
+                        raise ExecutionEngineContractError(
+                            engine=engine.name,
+                            message=(
+                                "Execution engine returned an outcome that does not match "
+                                "the canonical ExecutionContext."
+                            ),
+                        )
+                    engine_error = engine_outcome.error
             except asyncio.CancelledError:
                 cancelled = True
                 engine_outcome = None
+                engine_suspension = None
                 engine_error = None
                 context.mark_failed("cancelled")
             except ExecutionEngineError as exc:
                 engine_outcome = None
+                engine_suspension = None
                 engine_error = exc.detail
                 logging.getLogger(__name__).error(
                     "execution engine error run_id=%s engine=%s code=%s: %s",
@@ -341,6 +541,7 @@ class AgentRunner:
                     context.step,
                 )
                 engine_outcome = None
+                engine_suspension = None
                 if engine_invocation_started:
                     engine_error = EngineErrorDetail(
                         code="engine_execution_error",
@@ -360,6 +561,7 @@ class AgentRunner:
                     "agent run failed run_id=%s step=%d", run_id, context.step
                 )
                 engine_outcome = None
+                engine_suspension = None
                 if engine_invocation_started:
                     engine_error = EngineErrorDetail(
                         code="engine_execution_error",
@@ -371,11 +573,48 @@ class AgentRunner:
                     engine_error = None
                     context.mark_failed("llm_error")
 
-            # Background subagents are scoped to this Runner. Once the root run
-            # reaches a terminal boundary there is no reachable agent_result
-            # consumer, so pending children must not outlive cancellation or
-            # continue tool execution after the owning connection disappears.
-            await self._task_registry.cancel_all()
+            if engine_suspension is not None:
+                if has_finished:
+                    raise ExecutionEngineContractError(
+                        engine=engine_name,
+                        message="A run with a persisted terminal event cannot suspend again.",
+                    )
+
+                async def suspend_run() -> RunSuspension:
+                    await self._task_registry.cancel_all()
+                    await bus.publish(
+                        RunSuspendedEvent(
+                            run_id=run_id,
+                            session_id=session_id_str,
+                            reason=engine_suspension.reason,
+                            checkpoint_revision=engine_suspension.checkpoint_revision,
+                            interrupt_id=engine_suspension.interrupt_id,
+                            ts=_now(),
+                        )
+                    )
+                    persisted = replace(engine_suspension, event_seq=bus.last_event_seq)
+                    if recovery_store is not None:
+                        await recovery_store.mark_run_suspended(
+                            session_id_str,
+                            run_id,
+                            reason=persisted.reason,
+                            checkpoint_revision=persisted.checkpoint_revision,
+                            event_seq=persisted.event_seq,
+                            expected_resume_epoch=resume_epoch,
+                        )
+                    return persisted
+
+                suspension_task = asyncio.create_task(suspend_run())
+                cancelled_while_suspending = False
+                while not suspension_task.done():
+                    try:
+                        await asyncio.shield(suspension_task)
+                    except asyncio.CancelledError:
+                        cancelled_while_suspending = True
+                suspension = suspension_task.result()
+                if cancelled_while_suspending:
+                    raise asyncio.CancelledError()
+                return suspension
 
             terminal_status = _terminal_status(context.status)
             if terminal_status is None:
@@ -398,19 +637,78 @@ class AgentRunner:
                 context.mark_failed(engine_error.code)
                 terminal_status = "failed"
 
-            await bus.publish(
-                RunFinishedEvent(
-                    run_id=run_id,
-                    status=terminal_status,
-                    reason=context.reason,
-                    steps=context.step,
-                    error=engine_error.as_dict() if engine_error is not None else None,
-                    ts=_now(),
-                )
-            )
+            async def finish_run() -> None:
+                # Background subagents are scoped to this Runner. Complete the
+                # entire terminal boundary in a separate task so repeated
+                # cancellation of the caller cannot strand a child, omit the
+                # root terminal event, leave the writer open, or skip the
+                # session increment.
+                await self._task_registry.cancel_all()
+                if recovery_store is not None:
+                    # A durable tool is journaled as ``started`` immediately before
+                    # its external invocation.  Once this attempt is terminating,
+                    # any such row may already represent an applied side effect but
+                    # has no safely reusable result.  Fail closed in one transaction
+                    # before publishing the authoritative terminal event.
+                    await recovery_store.mark_started_tools_outcome_unknown(
+                        session_id_str,
+                        run_id,
+                    )
+                if not has_finished:
+                    await bus.publish(
+                        RunFinishedEvent(
+                            run_id=run_id,
+                            status=terminal_status,
+                            reason=context.reason,
+                            steps=context.step,
+                            error=engine_error.as_dict() if engine_error is not None else None,
+                            ts=_now(),
+                        )
+                    )
+                await writer.__aexit__(None, None, None)
+                transcript_count = 0
+                transcript_hash: str | None = None
+                if session is not None and store is not None:
+                    run_messages = context.messages[prefill_len:]
+                    if committed_run_messages:
+                        if (
+                            len(context.messages) < len(committed_run_messages)
+                            or context.messages[-len(committed_run_messages) :]
+                            != committed_run_messages
+                        ):
+                            raise TranscriptConflictError(
+                                "The terminal checkpoint conflicts with the committed run "
+                                "transcript."
+                            )
+                        run_messages = committed_run_messages
+                    transcript_commit = store.append_messages(
+                        session.id,
+                        run_messages,
+                        run_id=run_id,
+                    )
+                    if recovery_store is not None:
+                        transcript_count = transcript_commit.transcript_commit_count
+                        transcript_hash = transcript_commit.transcript_commit_hash
+                if recovery_store is not None:
+                    checkpoint_revision = (
+                        getattr(engine_outcome, "checkpoint_revision", None)
+                        or expected_checkpoint_revision
+                        if engine_outcome is not None
+                        else expected_checkpoint_revision
+                    )
+                    await recovery_store.mark_run_terminal(
+                        session_id_str,
+                        run_id,
+                        status=terminal_status,
+                        checkpoint_revision=checkpoint_revision,
+                        event_seq=bus.last_event_seq,
+                        transcript_commit_count=transcript_count,
+                        transcript_commit_hash=transcript_hash,
+                        expected_resume_epoch=resume_epoch,
+                    )
 
-        if session is not None and store is not None:
-            store.append_messages(session.id, context.messages[prefill_len:], run_id=run_id)
+            cleanup_cancelled = await _finish_despite_cancellation(finish_run())
+            cancelled = cancelled or cleanup_cancelled
 
         if cancelled:
             raise asyncio.CancelledError()

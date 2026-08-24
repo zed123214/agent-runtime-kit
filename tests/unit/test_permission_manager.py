@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -8,6 +9,31 @@ import pytest
 from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.permissions.policy import PermissionDecision, ToolPolicy
 from agent_runtime.core.permissions.storage import load_policy_file
+
+
+def test_durable_evaluation_reuses_cache_and_preserves_forced_ask() -> None:
+    manager = _make_manager()
+
+    assert manager.evaluate_durable("write_file", {"path": "x"}, "s1") == (None, "ask")
+    assert manager.apply_durable_response("always_allow", "s1", "bash") is True
+    assert manager.evaluate_durable("bash", {"command": "echo safe"}, "s1") == (
+        True,
+        "auto_allow",
+    )
+    assert manager.evaluate_durable("bash", {"command": "cd .."}, "s1") == (None, "ask")
+
+
+def test_durable_permission_deadline_is_explicit_and_timezone_aware() -> None:
+    no_timeout = PermissionManager(timeout_s=0)
+    timed = PermissionManager(timeout_s=5)
+
+    assert no_timeout.durable_expires_at() is None
+    deadline = timed.durable_expires_at()
+    assert deadline is not None
+    parsed = datetime.fromisoformat(deadline)
+    assert parsed.tzinfo is not None
+    assert parsed > datetime.now(UTC)
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -490,7 +516,7 @@ async def test_permission_timeout_cleans_up_pending() -> None:
     )
     # 超时后迟到的 respond 不应 crash
     assert mgr.respond("t_late", "allow_once", authorized_session_ids={"s1"}) is False
-    assert ("s1", "t_late") not in mgr._pending
+    assert ("s1", "", "t_late") not in mgr._pending
 
 
 async def test_duplicate_pending_tool_use_id_in_same_session_fails_closed() -> None:
@@ -557,7 +583,7 @@ async def test_same_tool_use_id_pending_requests_are_isolated_by_session() -> No
         timeout=1.0,
     )
 
-    assert set(mgr._pending) == {("s1", "shared-id"), ("s2", "shared-id")}
+    assert set(mgr._pending) == {("s1", "", "shared-id"), ("s2", "", "shared-id")}
     assert (
         mgr.respond(
             "shared-id",
@@ -611,7 +637,7 @@ async def test_cancel_session_with_shared_tool_use_id_leaves_other_session_pendi
     mgr.cancel_session("s1")
     assert await asyncio.wait_for(s1, timeout=1.0) == (False, "deny_once")
     assert s2.done() is False
-    assert set(mgr._pending) == {("s2", "shared-cancel-id")}
+    assert set(mgr._pending) == {("s2", "", "shared-cancel-id")}
 
     assert (
         mgr.respond(
@@ -646,4 +672,142 @@ async def test_cancelled_permission_wait_cleans_pending_request() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(pending, timeout=1.0)
-    assert ("s1", "cancelled-id") not in mgr._pending
+    assert ("s1", "", "cancelled-id") not in mgr._pending
+
+
+async def test_same_session_and_tool_use_id_are_isolated_by_run() -> None:
+    mgr = PermissionManager(timeout_s=0)
+    root_emitted = asyncio.Event()
+    child_emitted = asyncio.Event()
+
+    async def root_emitter(_event: dict[str, Any]) -> None:
+        root_emitted.set()
+
+    async def child_emitter(_event: dict[str, Any]) -> None:
+        child_emitted.set()
+
+    root = asyncio.create_task(
+        mgr.check_and_wait(
+            tool_use_id="shared-tool",
+            tool_name="bash",
+            params={"command": "echo root"},
+            session_id="s1",
+            run_id="root-run",
+            event_emitter=root_emitter,
+        )
+    )
+    child = asyncio.create_task(
+        mgr.check_and_wait(
+            tool_use_id="shared-tool",
+            tool_name="bash",
+            params={"command": "echo child"},
+            session_id="s1",
+            run_id="child-run",
+            event_emitter=child_emitter,
+        )
+    )
+    await asyncio.wait_for(
+        asyncio.gather(root_emitted.wait(), child_emitted.wait()),
+        timeout=1.0,
+    )
+
+    assert set(mgr._pending) == {
+        ("s1", "root-run", "shared-tool"),
+        ("s1", "child-run", "shared-tool"),
+    }
+    assert mgr.respond("shared-tool", "allow_once", authorized_session_ids={"s1"}) is False
+    assert root.done() is False
+    assert child.done() is False
+
+    assert (
+        mgr.respond(
+            "shared-tool",
+            "allow_once",
+            authorized_session_ids={"s1"},
+            session_id="s1",
+        )
+        is False
+    )
+    assert (
+        mgr.respond(
+            "shared-tool",
+            "allow_once",
+            authorized_session_ids={"s1"},
+            session_id="s2",
+            run_id="root-run",
+        )
+        is False
+    )
+    assert root.done() is False
+    assert child.done() is False
+
+    assert (
+        mgr.respond(
+            "shared-tool",
+            "allow_once",
+            authorized_session_ids={"s1"},
+            session_id="s1",
+            run_id="root-run",
+        )
+        is True
+    )
+    assert await asyncio.wait_for(root, timeout=1.0) == (True, "allow_once")
+    assert child.done() is False
+
+    assert (
+        mgr.respond(
+            "shared-tool",
+            "deny_once",
+            authorized_session_ids={"s1"},
+            session_id="s1",
+            run_id="child-run",
+        )
+        is True
+    )
+    assert await asyncio.wait_for(child, timeout=1.0) == (False, "deny_once")
+    assert mgr._pending == {}
+
+
+async def test_cancel_session_clears_all_runs_without_affecting_other_sessions() -> None:
+    mgr = PermissionManager(timeout_s=0)
+    emitted = {"s1-root": asyncio.Event(), "s1-child": asyncio.Event(), "s2": asyncio.Event()}
+
+    async def wait_for_permission(session_id: str, run_id: str, marker: str) -> tuple[bool, str]:
+        async def emitter(_event: dict[str, Any]) -> None:
+            emitted[marker].set()
+
+        return await mgr.check_and_wait(
+            tool_use_id="same-id",
+            tool_name="bash",
+            params={"command": marker},
+            session_id=session_id,
+            run_id=run_id,
+            event_emitter=emitter,
+        )
+
+    s1_root = asyncio.create_task(wait_for_permission("s1", "root", "s1-root"))
+    s1_child = asyncio.create_task(wait_for_permission("s1", "child", "s1-child"))
+    s2 = asyncio.create_task(wait_for_permission("s2", "other", "s2"))
+    await asyncio.wait_for(
+        asyncio.gather(*(event.wait() for event in emitted.values())),
+        timeout=1.0,
+    )
+
+    mgr.cancel_session("s1")
+
+    assert await asyncio.wait_for(s1_root, timeout=1.0) == (False, "deny_once")
+    assert await asyncio.wait_for(s1_child, timeout=1.0) == (False, "deny_once")
+    assert s2.done() is False
+    assert set(mgr._pending) == {("s2", "other", "same-id")}
+
+    assert (
+        mgr.respond(
+            "same-id",
+            "allow_once",
+            authorized_session_ids={"s2"},
+            session_id="s2",
+            run_id="other",
+        )
+        is True
+    )
+    assert await asyncio.wait_for(s2, timeout=1.0) == (True, "allow_once")

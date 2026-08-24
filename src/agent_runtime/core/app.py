@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import datetime
 import fnmatch
+import hashlib
+import hmac
 import json
 import logging
 import re
 import signal
 import time
+from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -23,6 +26,8 @@ from agent_runtime.core.bus.commands import (
     PermissionRespondCommand,
     PermissionRespondResult,
     PongResult,
+    RunGetStateCommand,
+    RunGetStateResult,
     SessionCloseCommand,
     SessionCloseResult,
     SessionCompactCommand,
@@ -31,13 +36,30 @@ from agent_runtime.core.bus.commands import (
     SessionCreateResult,
     SessionGetHistoryCommand,
     SessionGetHistoryResult,
+    SessionResumeCommand,
+    SessionResumeResult,
     SessionSendMessageCommand,
     SessionSendMessageResult,
 )
 from agent_runtime.core.bus.envelope import EventPushEnvelope, HandlerError
-from agent_runtime.core.config import RuntimeConfig, get_config
+from agent_runtime.core.bus.events import RunFinishedEvent, RunStartedEvent
+from agent_runtime.core.config import (
+    RuntimeConfig,
+    get_config,
+    resolve_data_root,
+    resolve_graph_checkpoint_path,
+)
 from agent_runtime.core.engine.router import EngineRouter
 from agent_runtime.core.events.bus import EventBus
+from agent_runtime.core.events.writer import EventWriter
+from agent_runtime.core.graph.event_log import EventLogError, read_event_log
+from agent_runtime.core.graph.recovery import (
+    CapabilityRejectedError,
+    RecoveryConflictError,
+    RecoveryNotFoundError,
+    RecoveryStore,
+    RecoveryStoreError,
+)
 from agent_runtime.core.llm.provider import AnthropicProvider
 from agent_runtime.core.logging_setup import setup_logging
 from agent_runtime.core.mcp.server import McpServerManager
@@ -47,10 +69,19 @@ from agent_runtime.core.runner import AgentRunner
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
 from agent_runtime.core.session import SessionManager, SessionStore
 from agent_runtime.core.session.manager import SESSION_NOT_FOUND
+from agent_runtime.core.session.store import TranscriptStoreError
 from agent_runtime.core.trace.record import TraceRecord
 from agent_runtime.core.trace.writer import TraceWriter
 from agent_runtime.core.transport.ipc_broadcaster import IpcEventBroadcaster
-from agent_runtime.core.transport.socket_server import SocketServer, get_connection_writer
+from agent_runtime.core.transport.socket_server import (
+    SocketServer,
+    get_connection_writer,
+    redact_sensitive_fields,
+)
+
+if TYPE_CHECKING:
+    from agent_runtime.core.llm.base import LLMProvider
+    from agent_runtime.core.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +92,10 @@ _MAX_REPLAY_TOTAL_BYTES = 8 * 1024 * 1024
 _MAX_REPLAY_LINES = 10_000
 _MAX_REPLAY_EVENTS = 1_000
 _MAX_REPLAY_SESSION_ROOTS = 10_000
+RECOVERY_REJECTED = -32030
+RECOVERY_CONFLICT = -32031
+RECOVERY_STATE_ERROR = -32032
+EVENT_LOG_ERROR = -32033
 
 
 def _now() -> str:
@@ -82,7 +117,13 @@ def _install_shutdown_handlers(loop: asyncio.AbstractEventLoop, shutdown: asynci
 
 
 class CoreApp:
-    def __init__(self, engine_router: EngineRouter | None = None) -> None:
+    def __init__(
+        self,
+        engine_router: EngineRouter | None = None,
+        *,
+        provider_factory: Callable[[RuntimeConfig], LLMProvider] | None = None,
+        extra_tools_factory: Callable[[], list[BaseTool]] | None = None,
+    ) -> None:
         self._start_time = time.monotonic()
         self._bus = EventBus()
         self._broadcaster: IpcEventBroadcaster | None = None
@@ -92,11 +133,27 @@ class CoreApp:
         self._run_tasks_by_session: dict[str, set[asyncio.Task[Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._engine_router = engine_router if engine_router is not None else EngineRouter()
+        self._provider_factory = provider_factory
+        self._extra_tools_factory = extra_tools_factory or (lambda: [])
         self._sessions: SessionManager | None = None
         self._permission_manager: PermissionManager | None = None
         self._mcp_manager: McpServerManager | None = None
         self._sessions_root = Path("~/.agentrt/sessions").expanduser()
         self._runs_root = RUNS_DIR
+        self._data_root = Path("~/.agentrt").expanduser()
+        self._recovery_store: RecoveryStore | None = None
+        self._durable_enabled = False
+        self._resume_attach_inflight: dict[str, bytes] = {}
+
+    def _provider_for_runner(self, config: RuntimeConfig) -> LLMProvider | None:
+        if self._provider_factory is None:
+            return None
+        return self._provider_factory(config)
+
+    def _provider_for_compaction(self, config: RuntimeConfig) -> LLMProvider:
+        if self._provider_factory is not None:
+            return self._provider_factory(config)
+        return AnthropicProvider(config.llm.default_model)
 
     # 处理 core.ping 请求，返回服务版本、运行时长和接收时间
     async def _ping_handler(self, params: dict[str, Any]) -> PongResult:
@@ -111,7 +168,7 @@ class CoreApp:
     # 将 EventBus 事件写入 trace（作为 EventBus 订阅者）
     async def _trace_event_handler(self, event: BaseModel) -> None:
         assert self._trace is not None
-        event_dict = event.model_dump()
+        event_dict = redact_sensitive_fields(event.model_dump())
         self._trace.emit(
             TraceRecord(
                 ts=_now(),
@@ -149,7 +206,7 @@ class CoreApp:
 
         task.add_done_callback(_discard)
 
-    async def _cancel_runs_and_delete_threads(self, session_ids: frozenset[str]) -> None:
+    async def _cleanup_disconnected_sessions(self, session_ids: frozenset[str]) -> None:
         run_tasks: set[asyncio.Task[Any]] = set()
         for session_id in session_ids:
             run_tasks.update(self._run_tasks_by_session.pop(session_id, set()))
@@ -159,8 +216,33 @@ class CoreApp:
         if run_tasks:
             await asyncio.gather(*run_tasks, return_exceptions=True)
             self._running_runs.difference_update(run_tasks)
-        for session_id in session_ids:
-            await self._engine_router.delete_thread(session_id)
+        if self._sessions is not None:
+            for session_id in session_ids:
+                preserve = await self._sessions.close_disconnected(session_id)
+                if not preserve:
+                    await self._delete_session_resources(session_id)
+        else:
+            for session_id in session_ids:
+                await self._delete_session_resources(session_id)
+
+    async def _delete_session_resources(self, session_id: str) -> None:
+        if self._recovery_store is not None:
+            await self._recovery_store.delete_capability(session_id)
+        await self._engine_router.delete_thread(session_id)
+
+    async def _cancel_session_run_tasks(self, session_id: str) -> None:
+        current = asyncio.current_task()
+        tasks = {
+            task
+            for task in self._run_tasks_by_session.pop(session_id, set())
+            if task is not current
+        }
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._running_runs.difference_update(tasks)
 
     async def _wait_for_cleanup_tasks(self) -> None:
         while self._cleanup_tasks:
@@ -198,23 +280,51 @@ class CoreApp:
         assert self._sessions is not None
         cmd = SessionCreateCommand.model_validate(params)
         writer = get_connection_writer()
-        session = await self._sessions.create(
-            mode=cmd.mode,
-            title=cmd.title,
-            before_publish=lambda created: self._bind_connection_to_session(writer, created.id),
+        durable = self._durable_enabled and cmd.mode == "chat"
+        create_args: dict[str, Any] = {
+            "mode": cmd.mode,
+            "title": cmd.title,
+            "before_publish": lambda created: self._bind_connection_to_session(writer, created.id),
+        }
+        if durable:
+            create_args["durable"] = True
+        session = await self._sessions.create(**create_args)
+        resume_token: str | None = None
+        if durable:
+            assert self._recovery_store is not None
+            try:
+                grant = await self._recovery_store.issue_capability(session.id)
+            except RecoveryStoreError as exc:
+                raise HandlerError(
+                    RECOVERY_STATE_ERROR,
+                    "durable session could not be initialized",
+                    {"code": exc.code},
+                ) from exc
+            resume_token = grant.token
+        return SessionCreateResult(
+            session_id=session.id,
+            status=session.status,
+            resume_token=resume_token,
         )
-        return SessionCreateResult(session_id=session.id, status=session.status)
 
     # 向 session 发送一条用户消息并同步等待对应 run 完成
     async def _session_send_handler(self, params: dict[str, Any]) -> SessionSendMessageResult:
         assert self._sessions is not None
         cmd = SessionSendMessageCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
+        self._sessions.hydrate(cmd.session_id)
         current_task = asyncio.current_task()
         if current_task is not None:
             self._track_run_task(cmd.session_id, current_task)
         try:
-            run_id = await self._sessions.send_message(cmd.session_id, cmd.content)
+            try:
+                run_id = await self._sessions.send_message(cmd.session_id, cmd.content)
+            except RecoveryStoreError as exc:
+                raise HandlerError(
+                    RECOVERY_STATE_ERROR,
+                    "durable run state could not be updated",
+                    {"code": exc.code},
+                ) from exc
         finally:
             if current_task is not None:
                 self._untrack_run_task(cmd.session_id, current_task)
@@ -225,8 +335,482 @@ class CoreApp:
         assert self._sessions is not None
         cmd = SessionGetHistoryCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
+        self._sessions.hydrate(cmd.session_id)
         messages = await self._sessions.get_history(cmd.session_id)
         return SessionGetHistoryResult(messages=messages)
+
+    async def _latest_graph_state(self, session_id: str, run_id: str) -> Any:
+        try:
+            return await self._engine_router.latest_graph_state(
+                session_id,
+                session_id=session_id,
+                run_id=run_id,
+            )
+        except RuntimeError as exc:
+            if getattr(exc, "code", None) != "checkpoint_conflict":
+                raise
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint state conflicts with recovery metadata",
+                {"code": "checkpoint_conflict"},
+            ) from exc
+
+    async def _coordinate_recovery_checkpoint(self, run: Any, state: Any) -> Any:
+        """Persist a validated checkpoint revision discovered after process loss."""
+
+        assert self._recovery_store is not None
+        if (
+            run.checkpoint_revision is not None
+            and run.checkpoint_revision != state.checkpoint_revision
+            and run.suspension_reason != "process_recovery"
+        ):
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint revision conflict",
+                {"code": "checkpoint_conflict"},
+            )
+        event_path = self._sessions_root / run.session_id / "runs" / run.run_id / "events.jsonl"
+        try:
+            durable_event_seq = read_event_log(event_path, repair_tail=True).last_event_seq
+        except EventLogError as exc:
+            raise HandlerError(
+                EVENT_LOG_ERROR,
+                "event log is corrupt",
+                {"code": exc.code},
+            ) from exc
+        event_seq = max(run.event_seq, state.event_seq, durable_event_seq)
+        reason = state.suspension_reason or run.suspension_reason or "process_recovery"
+        if (
+            run.checkpoint_revision == state.checkpoint_revision
+            and run.event_seq == event_seq
+            and run.suspension_reason == reason
+        ):
+            return run
+        try:
+            return await self._recovery_store.mark_run_suspended(
+                run.session_id,
+                run.run_id,
+                reason=reason,
+                checkpoint_revision=state.checkpoint_revision,
+                event_seq=event_seq,
+                expected_resume_epoch=run.resume_epoch,
+            )
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint coordination conflict",
+                {"code": exc.code},
+            ) from exc
+
+    def _recovery_event_path(self, session_id: str, run_id: str) -> Path:
+        return self._sessions_root / session_id / "runs" / run_id / "events.jsonl"
+
+    def _read_recovery_events(self, session_id: str, run_id: str) -> Any:
+        try:
+            return read_event_log(
+                self._recovery_event_path(session_id, run_id),
+                repair_tail=True,
+            )
+        except EventLogError as exc:
+            raise HandlerError(
+                EVENT_LOG_ERROR,
+                "event log is corrupt",
+                {"code": exc.code},
+            ) from exc
+
+    @staticmethod
+    def _persisted_terminal_event(snapshot: Any, run_id: str) -> dict[str, Any] | None:
+        finished = [
+            event
+            for event in snapshot.events
+            if event.get("run_id") == run_id and event.get("type") == "run.finished"
+        ]
+        if not finished:
+            return None
+        if len(finished) != 1 or snapshot.events[-1] is not finished[0]:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "run lifecycle conflicts with recovery metadata",
+                {"code": "lifecycle_conflict"},
+            )
+        status = finished[0].get("status")
+        if status not in {"success", "failed"}:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "run lifecycle conflicts with recovery metadata",
+                {"code": "lifecycle_conflict"},
+            )
+        return dict(finished[0])
+
+    async def _repair_terminal_manifest(
+        self,
+        run: Any,
+        state: Any,
+        snapshot: Any,
+        terminal_event: dict[str, Any],
+    ) -> Any:
+        """Make an already-durable terminal event authoritative after a crash."""
+
+        assert self._recovery_store is not None
+        checkpoint_revision = (
+            state.checkpoint_revision if state is not None else run.checkpoint_revision
+        )
+        try:
+            terminal = await self._recovery_store.mark_run_terminal(
+                run.session_id,
+                run.run_id,
+                status=terminal_event["status"],
+                checkpoint_revision=checkpoint_revision,
+                event_seq=max(run.event_seq, snapshot.last_event_seq),
+                transcript_commit_count=run.transcript_commit_count,
+                transcript_commit_hash=run.transcript_commit_hash,
+                expected_resume_epoch=run.resume_epoch,
+            )
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "terminal recovery coordination conflict",
+                {"code": exc.code},
+            ) from exc
+
+        if terminal_event.get("reason") == "session_closed":
+            store = SessionStore(self._sessions_root)
+            try:
+                session = store.read_meta(run.session_id)
+            except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
+                raise HandlerError(
+                    RECOVERY_STATE_ERROR,
+                    "durable session metadata is unavailable",
+                    {"code": "session_state_error"},
+                ) from exc
+            session.status = "closed"
+            session.active_run_id = None
+            session.updated_at = _now()
+            store.write_meta(session)
+            await self._delete_session_resources(run.session_id)
+        return terminal
+
+    async def _fail_run_without_checkpoint(self, run: Any, snapshot: Any) -> Any:
+        """Close the create_run-before-first-checkpoint crash window durably."""
+
+        assert self._recovery_store is not None
+        event_path = self._recovery_event_path(run.session_id, run.run_id)
+        bus = EventBus(correlation_id=run.run_id, session_id=run.session_id)
+        async with EventWriter(event_path, run_id=run.run_id) as writer:
+            writer.subscribe(bus)
+            has_started = any(
+                event.get("run_id") == run.run_id and event.get("type") == "run.started"
+                for event in snapshot.events
+            )
+            if not has_started:
+                goal = ""
+                try:
+                    messages = SessionStore(self._sessions_root).read_messages_strict(
+                        run.session_id
+                    )
+                except (FileNotFoundError, OSError, ValueError, KeyError, TranscriptStoreError):
+                    messages = []
+                for message in reversed(messages):
+                    if message.get("role") == "user":
+                        goal = str(message.get("content", ""))
+                        break
+                await bus.publish(RunStartedEvent(run_id=run.run_id, goal=goal, ts=_now()))
+            await bus.publish(
+                RunFinishedEvent(
+                    run_id=run.run_id,
+                    status="failed",
+                    reason="process_lost_before_checkpoint",
+                    steps=0,
+                    ts=_now(),
+                )
+            )
+        refreshed = self._read_recovery_events(run.session_id, run.run_id)
+        terminal_event = self._persisted_terminal_event(refreshed, run.run_id)
+        assert terminal_event is not None
+        return await self._repair_terminal_manifest(run, None, refreshed, terminal_event)
+
+    async def _reconcile_interrupted_run(self, run: Any) -> Any:
+        """Reconcile one process-loss run without executing Graph or tools."""
+
+        snapshot = self._read_recovery_events(run.session_id, run.run_id)
+        terminal_event = self._persisted_terminal_event(snapshot, run.run_id)
+        state = await self._latest_graph_state(run.session_id, run.run_id)
+        if terminal_event is not None:
+            return await self._repair_terminal_manifest(run, state, snapshot, terminal_event)
+        if state is None:
+            if run.checkpoint_revision is None:
+                return await self._fail_run_without_checkpoint(run, snapshot)
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint state is unavailable",
+                {"code": "checkpoint_not_found"},
+            )
+        return await self._coordinate_recovery_checkpoint(run, state)
+
+    async def _resume_leased_run(self, session_id: str, run: Any, resume_value: object) -> None:
+        assert self._sessions is not None
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._track_run_task(session_id, current_task)
+        try:
+            result = await self._sessions.resume_run(
+                session_id,
+                run,
+                resume_value=resume_value,
+            )
+        finally:
+            if current_task is not None:
+                self._untrack_run_task(session_id, current_task)
+        error = getattr(result, "error", None)
+        if error is not None and error.code == "checkpoint_conflict":
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint revision conflict",
+                {"code": error.code},
+            )
+
+    async def _session_resume_handler(self, params: dict[str, Any]) -> SessionResumeResult:
+        assert self._sessions is not None
+        if self._recovery_store is None:
+            raise HandlerError(RECOVERY_REJECTED, "resume capability rejected")
+        cmd = SessionResumeCommand.model_validate(params)
+
+        token_fingerprint = hashlib.sha256(cmd.resume_token.encode("utf-8")).digest()
+        existing_fingerprint = self._resume_attach_inflight.get(cmd.session_id)
+        if existing_fingerprint is not None and hmac.compare_digest(
+            existing_fingerprint,
+            token_fingerprint,
+        ):
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "durable resume conflict",
+                {"code": "resume_in_progress"},
+            )
+        owns_attach_claim = existing_fingerprint is None
+        if owns_attach_claim:
+            self._resume_attach_inflight[cmd.session_id] = token_fingerprint
+        broadcaster: IpcEventBroadcaster | None = None
+        writer: asyncio.StreamWriter | None = None
+        reserved_by_request = False
+        attach_committed = False
+        try:
+            validation = await self._recovery_store.validate_capability(
+                cmd.session_id,
+                cmd.resume_token,
+            )
+            if not owns_attach_claim:
+                current_fingerprint = self._resume_attach_inflight.get(cmd.session_id)
+                if current_fingerprint is not None and hmac.compare_digest(
+                    current_fingerprint,
+                    token_fingerprint,
+                ):
+                    raise HandlerError(
+                        RECOVERY_CONFLICT,
+                        "durable resume conflict",
+                        {"code": "resume_in_progress"},
+                    )
+                self._resume_attach_inflight[cmd.session_id] = token_fingerprint
+                owns_attach_claim = True
+            if self._sessions.is_recovery_closed(cmd.session_id):
+                await self._delete_session_resources(cmd.session_id)
+                raise HandlerError(RECOVERY_REJECTED, "resume capability rejected")
+
+            broadcaster = self._broadcaster
+            assert broadcaster is not None
+            writer = get_connection_writer()
+            already_owned = broadcaster.owns_session(writer, cmd.session_id)
+            if not broadcaster.reserve_session(writer, cmd.session_id):
+                raise HandlerError(SESSION_NOT_FOUND, "session not found")
+            reserved_by_request = not already_owned
+            run = await self._recovery_store.latest_unfinished_run(cmd.session_id)
+            state = (
+                await self._latest_graph_state(cmd.session_id, run.run_id)
+                if run is not None
+                else None
+            )
+            if run is not None and state is not None:
+                run = await self._coordinate_recovery_checkpoint(run, state)
+            current_revision = (
+                state.checkpoint_revision
+                if state is not None
+                else run.checkpoint_revision
+                if run is not None
+                else None
+            )
+            if cmd.expected_revision is not None and cmd.expected_revision != current_revision:
+                raise HandlerError(
+                    RECOVERY_CONFLICT,
+                    "checkpoint revision conflict",
+                    {"code": "checkpoint_conflict"},
+                )
+            if run is not None and (run.status != "suspended" or state is None):
+                raise HandlerError(
+                    RECOVERY_CONFLICT,
+                    "durable run is not attachable",
+                    {"code": "recovery_conflict"},
+                )
+            session = self._sessions.hydrate_recovery(cmd.session_id, run)
+
+            resume_value: object | None = None
+            auto_resume = False
+            if run is not None and state is not None and state.resumable:
+                if state.suspension_reason == "process_recovery":
+                    auto_resume = True
+                elif state.suspension_reason == "permission" and self._permission_expired(state):
+                    auto_resume = True
+                    resume_value = "timeout"
+            if auto_resume:
+                assert run is not None
+                assert state is not None
+                try:
+                    lease = await self._recovery_store.acquire_resume_lease(
+                        cmd.session_id,
+                        run.run_id,
+                        expected_checkpoint_revision=state.checkpoint_revision,
+                        expected_resume_epoch=run.resume_epoch,
+                    )
+                except RecoveryStoreError as exc:
+                    raise HandlerError(
+                        RECOVERY_CONFLICT,
+                        "durable resume lease conflict",
+                        {"code": exc.code},
+                    ) from exc
+                await self._resume_leased_run(cmd.session_id, lease, resume_value)
+                run = await self._recovery_store.latest_run(cmd.session_id)
+                state = (
+                    await self._latest_graph_state(cmd.session_id, run.run_id)
+                    if run is not None
+                    else None
+                )
+
+            result_run_id = run.run_id if run is not None else None
+            result_status = state.status if state is not None else session.status
+            result_reason = state.suspension_reason if state is not None else None
+            result_revision = state.checkpoint_revision if state is not None else None
+            result_event_seq = max(
+                run.event_seq if run is not None else 0,
+                state.event_seq if state is not None else 0,
+            )
+            grant = await self._recovery_store.rotate_capability(
+                cmd.session_id,
+                cmd.resume_token,
+                expected_token_version=validation.token_version,
+            )
+            if not broadcaster.commit_reserved_session(writer, cmd.session_id):
+                raise HandlerError(SESSION_NOT_FOUND, "session not found")
+            attach_committed = True
+        except CapabilityRejectedError as exc:
+            raise HandlerError(
+                RECOVERY_REJECTED,
+                "resume capability rejected",
+                {"code": exc.code},
+            ) from exc
+        except (RecoveryConflictError, RecoveryNotFoundError) as exc:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "durable resume conflict",
+                {"code": exc.code},
+            ) from exc
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_STATE_ERROR,
+                "durable state is unavailable",
+                {"code": exc.code},
+            ) from exc
+        finally:
+            if reserved_by_request and not attach_committed:
+                assert broadcaster is not None
+                assert writer is not None
+                broadcaster.release_reserved_session(writer, cmd.session_id)
+            if owns_attach_claim:
+                current_fingerprint = self._resume_attach_inflight.get(cmd.session_id)
+                if current_fingerprint is not None and hmac.compare_digest(
+                    current_fingerprint,
+                    token_fingerprint,
+                ):
+                    self._resume_attach_inflight.pop(cmd.session_id, None)
+
+        return SessionResumeResult(
+            session_id=cmd.session_id,
+            run_id=result_run_id,
+            status=result_status,
+            suspension_reason=result_reason,
+            checkpoint_revision=result_revision,
+            event_seq=result_event_seq,
+            next_resume_token=grant.token,
+        )
+
+    @staticmethod
+    def _permission_expired(state: Any) -> bool:
+        if state.pending_expires_at is None:
+            return False
+        try:
+            deadline = datetime.datetime.fromisoformat(
+                state.pending_expires_at.replace("Z", "+00:00")
+            )
+            if deadline.tzinfo is None:
+                raise ValueError("durable permission deadline must include a timezone")
+        except ValueError as exc:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "checkpoint permission deadline is invalid",
+                {"code": "checkpoint_conflict"},
+            ) from exc
+        return datetime.datetime.now(UTC) >= deadline.astimezone(UTC)
+
+    async def _run_get_state_handler(self, params: dict[str, Any]) -> RunGetStateResult:
+        if self._recovery_store is None:
+            raise HandlerError(RECOVERY_STATE_ERROR, "durable state is unavailable")
+        cmd = RunGetStateCommand.model_validate(params)
+        self._require_current_connection_owns(cmd.session_id)
+        assert self._sessions is not None
+        self._sessions.hydrate(cmd.session_id)
+        try:
+            run = (
+                await self._recovery_store.get_run(cmd.session_id, cmd.run_id)
+                if cmd.run_id is not None
+                else await self._recovery_store.latest_run(cmd.session_id)
+            )
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_STATE_ERROR,
+                "durable run state is unavailable",
+                {"code": exc.code},
+            ) from exc
+        if run is None:
+            raise HandlerError(RECOVERY_STATE_ERROR, "durable run state is unavailable")
+        state = await self._latest_graph_state(cmd.session_id, run.run_id)
+        if state is None:
+            raise HandlerError(
+                RECOVERY_STATE_ERROR,
+                "checkpoint state is unavailable",
+                {"code": "checkpoint_not_found"},
+            )
+        if run.status == "suspended":
+            run = await self._coordinate_recovery_checkpoint(run, state)
+        pending_summary: dict[str, str] | None = None
+        if state.pending_tool_use_id is not None:
+            pending_summary = {"tool_use_id": state.pending_tool_use_id}
+            if state.interrupt_id is not None:
+                pending_summary["interrupt_id"] = state.interrupt_id
+            if state.pending_tool_name is not None:
+                pending_summary["tool_name"] = state.pending_tool_name
+            if state.pending_param_preview is not None:
+                pending_summary["param_preview"] = state.pending_param_preview
+            if state.pending_expires_at is not None:
+                pending_summary["expires_at"] = state.pending_expires_at
+        return RunGetStateResult(
+            session_id=state.session_id,
+            run_id=state.run_id,
+            status=state.status,
+            current_node=state.current_node,
+            next_node=state.next_node,
+            suspension_reason=state.suspension_reason,
+            checkpoint_revision=state.checkpoint_revision,
+            event_seq=max(run.event_seq, state.event_seq),
+            pending_approval_summary=pending_summary,
+            resumable=state.resumable,
+        )
 
     # 接收客户端权限审批响应，resolve 对应挂起的 Future
     async def _permission_respond_handler(self, params: dict[str, Any]) -> PermissionRespondResult:
@@ -245,12 +829,83 @@ class CoreApp:
             if self._broadcaster is not None
             else frozenset()
         )
+        if (
+            cmd.session_id is not None
+            and cmd.run_id is not None
+            and cmd.session_id in authorized_session_ids
+            and self._sessions is not None
+        ):
+            session = self._sessions.hydrate(cmd.session_id)
+            if session.durable:
+                return await self._respond_durable_permission(cmd)
         ok = self._permission_manager.respond(
             cmd.tool_use_id,
             cmd.decision,
             authorized_session_ids=authorized_session_ids,
+            session_id=cmd.session_id,
+            run_id=cmd.run_id,
         )
         return PermissionRespondResult(ok=ok)
+
+    async def _respond_durable_permission(
+        self,
+        cmd: PermissionRespondCommand,
+    ) -> PermissionRespondResult:
+        assert self._sessions is not None
+        assert self._recovery_store is not None
+        if (
+            cmd.session_id is None
+            or cmd.run_id is None
+            or cmd.interrupt_id is None
+            or cmd.expected_revision is None
+            or cmd.decision not in {"allow_once", "always_allow", "deny_once", "always_deny"}
+        ):
+            return PermissionRespondResult(ok=False)
+        try:
+            run = await self._recovery_store.get_run(cmd.session_id, cmd.run_id)
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_STATE_ERROR,
+                "durable run state is unavailable",
+                {"code": exc.code},
+            ) from exc
+        if run is None or run.status != "suspended":
+            return PermissionRespondResult(ok=False)
+        state = await self._latest_graph_state(cmd.session_id, cmd.run_id)
+        if (
+            state is None
+            or state.suspension_reason != "permission"
+            or not state.resumable
+            or state.session_id != cmd.session_id
+            or state.run_id != cmd.run_id
+            or state.pending_tool_use_id != cmd.tool_use_id
+            or state.interrupt_id != cmd.interrupt_id
+            or state.checkpoint_revision != cmd.expected_revision
+        ):
+            return PermissionRespondResult(ok=False)
+        run = await self._coordinate_recovery_checkpoint(run, state)
+
+        expired = self._permission_expired(state)
+
+        try:
+            lease = await self._recovery_store.acquire_resume_lease(
+                cmd.session_id,
+                cmd.run_id,
+                expected_checkpoint_revision=cmd.expected_revision,
+                expected_resume_epoch=run.resume_epoch,
+            )
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_CONFLICT,
+                "durable approval lease conflict",
+                {"code": exc.code},
+            ) from exc
+        await self._resume_leased_run(
+            cmd.session_id,
+            lease,
+            "timeout" if expired else cmd.decision,
+        )
+        return PermissionRespondResult(ok=not expired)
 
     # 在 session.created 发布前独占登记连接 owner；断连竞态统一伪装为 not found
     def _bind_connection_to_session(
@@ -271,7 +926,7 @@ class CoreApp:
         for session_id in session_ids:
             if self._permission_manager is not None:
                 self._permission_manager.cancel_session(session_id)
-        cleanup_task = asyncio.create_task(self._cancel_runs_and_delete_threads(session_ids))
+        cleanup_task = asyncio.create_task(self._cleanup_disconnected_sessions(session_ids))
         self._track_cleanup_task(cleanup_task)
 
     # 手动压缩 session thread，将摘要持久化写入 thread.jsonl
@@ -279,6 +934,7 @@ class CoreApp:
         assert self._sessions is not None
         cmd = SessionCompactCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
+        self._sessions.hydrate(cmd.session_id)
         result = await self._sessions.compact(cmd.session_id, cmd.focus)
         return result  # type: ignore[no-any-return]
 
@@ -287,7 +943,16 @@ class CoreApp:
         assert self._sessions is not None
         cmd = SessionCloseCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
-        await self._sessions.close(cmd.session_id)
+        await self._cancel_session_run_tasks(cmd.session_id)
+        self._sessions.hydrate(cmd.session_id)
+        try:
+            await self._sessions.close(cmd.session_id)
+        except RecoveryStoreError as exc:
+            raise HandlerError(
+                RECOVERY_STATE_ERROR,
+                "durable session could not be closed",
+                {"code": exc.code},
+            ) from exc
         return SessionCloseResult(status="closed")
 
     # 注册客户端事件订阅，可选先回放 events.jsonl 历史再接收实时流
@@ -297,15 +962,29 @@ class CoreApp:
         assert self._broadcaster is not None
 
         replayed_count = 0
+        sub_id = self._broadcaster.subscribe(
+            writer,
+            cmd.topics,
+            cmd.scope,
+            paused=cmd.replay_from_run is not None,
+        )
         if cmd.replay_from_run is not None:
-            replayed_count = await self._replay_events(
-                cmd.replay_from_run,
-                writer,
-                cmd.topics,
-                cmd.scope,
-            )
-
-        sub_id = self._broadcaster.subscribe(writer, cmd.topics, cmd.scope)
+            try:
+                replayed_count, snapshot_event_seq = await self._replay_events_snapshot(
+                    cmd.replay_from_run,
+                    writer,
+                    cmd.topics,
+                    cmd.scope,
+                    after_event_seq=cmd.after_event_seq,
+                )
+                await self._broadcaster.activate_buffered(
+                    sub_id,
+                    replay_run_id=cmd.replay_from_run,
+                    after_event_seq=snapshot_event_seq,
+                )
+            except (Exception, asyncio.CancelledError):
+                self._broadcaster.unsubscribe_id(sub_id)
+                raise
         return EventSubscribeResult(subscription_id=sub_id, replayed_count=replayed_count)
 
     # 从 events.jsonl 向 writer 回放匹配 topic 的历史事件，返回已回放条数
@@ -315,60 +994,109 @@ class CoreApp:
         writer: asyncio.StreamWriter,
         topics: list[str],
         scope: str,
+        *,
+        after_event_seq: int = 0,
     ) -> int:
+        count, _ = await self._replay_events_snapshot(
+            run_id,
+            writer,
+            topics,
+            scope,
+            after_event_seq=after_event_seq,
+        )
+        return count
+
+    async def _replay_events_snapshot(
+        self,
+        run_id: str,
+        writer: asyncio.StreamWriter,
+        topics: list[str],
+        scope: str,
+        *,
+        after_event_seq: int = 0,
+    ) -> tuple[int, int]:
         if _SAFE_RUN_ID.fullmatch(run_id) is None or run_id in {".", ".."}:
-            return 0
+            return 0, after_event_seq
 
         path = self._find_replay_file(run_id, writer)
         if path is None:
-            return 0
+            return 0, after_event_seq
 
-        count = 0
-        total_bytes = 0
-        line_count = 0
         try:
-            with path.open("rb") as stream:
-                while line_count < _MAX_REPLAY_LINES and total_bytes < _MAX_REPLAY_TOTAL_BYTES:
-                    raw = stream.readline(_MAX_REPLAY_LINE_BYTES + 1)
-                    if not raw:
-                        break
-                    line_count += 1
-                    total_bytes += len(raw)
-
-                    if len(raw) > _MAX_REPLAY_LINE_BYTES:
-                        while raw and not raw.endswith(b"\n"):
-                            raw = stream.readline(_MAX_REPLAY_LINE_BYTES + 1)
-                            total_bytes += len(raw)
-                            if total_bytes >= _MAX_REPLAY_TOTAL_BYTES:
-                                break
-                        continue
-                    if total_bytes > _MAX_REPLAY_TOTAL_BYTES:
-                        break
-                    try:
-                        event = json.loads(raw)
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        continue
-                    if not isinstance(event, dict) or event.get("run_id") != run_id:
-                        continue
-                    event_type = event.get("type")
-                    if not isinstance(event_type, str):
-                        continue
-                    if not any(fnmatch.fnmatch(event_type, pattern) for pattern in topics):
-                        continue
-                    assert self._broadcaster is not None
-                    if not self._broadcaster.can_replay(writer, event, scope):
-                        continue
-                    envelope = EventPushEnvelope(event=event)
-                    writer.write(envelope.model_dump_json().encode() + b"\n")
-                    count += 1
-                    if count >= _MAX_REPLAY_EVENTS:
-                        break
+            snapshot = read_event_log(path)
+        except EventLogError as exc:
+            raise HandlerError(
+                EVENT_LOG_ERROR,
+                "event log is corrupt",
+                {"code": exc.code},
+            ) from exc
         except OSError:
             logger.debug("replay file became unavailable: %s", path, exc_info=True)
+            return 0, after_event_seq
+
+        events: list[dict[str, Any]] = []
+        for event in snapshot.events:
+            event_seq = event.get("event_seq")
+            if event_seq is None:
+                if after_event_seq == 0:
+                    events.append(dict(event))
+            elif isinstance(event_seq, int) and event_seq > after_event_seq:
+                events.append(dict(event))
+
+        if len(events) > _MAX_REPLAY_LINES:
+            raise HandlerError(
+                EVENT_LOG_ERROR,
+                "event replay exceeds limit",
+                {"code": "replay_limit_exceeded"},
+            )
+
+        broadcaster = self._broadcaster
+        assert broadcaster is not None
+        replay_rows: list[tuple[dict[str, Any], bytes]] = []
+        total_bytes = 0
+        for event in events:
+            raw = json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            total_bytes += len(raw) + 1
+            if total_bytes > _MAX_REPLAY_TOTAL_BYTES:
+                raise HandlerError(
+                    EVENT_LOG_ERROR,
+                    "event replay exceeds limit",
+                    {"code": "replay_limit_exceeded"},
+                )
+            if event.get("run_id") != run_id:
+                continue
+            event_type = event.get("type")
+            if not isinstance(event_type, str):
+                continue
+            if not any(fnmatch.fnmatch(event_type, pattern) for pattern in topics):
+                continue
+            if not broadcaster.can_replay(writer, event, scope):
+                continue
+            if len(raw) > _MAX_REPLAY_LINE_BYTES or len(replay_rows) >= _MAX_REPLAY_EVENTS:
+                raise HandlerError(
+                    EVENT_LOG_ERROR,
+                    "event replay exceeds limit",
+                    {"code": "replay_limit_exceeded"},
+                )
+            replay_rows.append((event, raw))
+
+        count = 0
+        replayed_event_seq = after_event_seq
+        for event, _raw in replay_rows:
+            envelope = EventPushEnvelope(event=event)
+            try:
+                writer.write(envelope.model_dump_json().encode() + b"\n")
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                broadcaster.disconnect(writer)
+                break
+            count += 1
+            event_seq = event.get("event_seq")
+            if isinstance(event_seq, int):
+                replayed_event_seq = event_seq
 
         if count:
-            await writer.drain()
-        return count
+            await broadcaster.drain_replay(writer)
+        return count, replayed_event_seq
 
     def _find_replay_file(
         self,
@@ -439,6 +1167,10 @@ class CoreApp:
     async def run(self) -> None:
         self._start_time = time.monotonic()
         self._config = get_config()
+        self._data_root = resolve_data_root(self._config)
+        self._data_root.mkdir(parents=True, exist_ok=True)
+        self._sessions_root = self._data_root / "sessions"
+        self._runs_root = self._data_root / "runs"
         setup_logging(self._config)
 
         if self._config.trace.enabled:
@@ -447,7 +1179,25 @@ class CoreApp:
             await self._trace.start()
             self._bus.subscribe(self._trace_event_handler)
 
-        policy_file = Path("~/.agentrt/policy.toml").expanduser()
+        config = self._config
+        if config.agent.engine == "graph":
+            checkpoint_path = resolve_graph_checkpoint_path(config, self._data_root)
+            if config.graph.checkpoint_backend == "sqlite":
+                self._recovery_store = RecoveryStore(self._data_root / "recovery.sqlite3")
+            self._engine_router.configure_graph(
+                backend=config.graph.checkpoint_backend,
+                sqlite_path=checkpoint_path,
+                recovery_store=self._recovery_store,
+            )
+            await self._engine_router.ensure_graph_available()
+            if self._recovery_store is not None:
+                interrupted = await self._recovery_store.suspend_interrupted_runs()
+                for run in interrupted:
+                    await self._reconcile_interrupted_run(run)
+                logger.info("recovery: indexed %d interrupted run(s)", len(interrupted))
+                self._durable_enabled = True
+
+        policy_file = self._data_root / "policy.toml"
         self._permission_manager = PermissionManager(
             policy_file=policy_file,
             timeout_s=self._config.permission.timeout_s,
@@ -464,8 +1214,6 @@ class CoreApp:
         )
         self._bus.subscribe(self._broadcaster.handle)
         store = SessionStore(self._sessions_root)
-        assert self._config is not None
-        config = self._config
 
         self._mcp_manager = McpServerManager()
         if self._config.mcp.servers:
@@ -477,14 +1225,19 @@ class CoreApp:
             runner_factory=lambda: AgentRunner(
                 config,
                 bus=self._bus,
+                provider=self._provider_for_runner(config),
+                runs_dir=self._runs_root,
                 trace=self._trace,
                 permission_manager=self._permission_manager,
                 mcp_manager=self._mcp_manager,
                 engine_resolver=self._engine_router,
+                recovery_store=self._recovery_store,
+                extra_tools=self._extra_tools_factory(),
             ),
             bus=self._bus,
-            provider_factory=lambda: AnthropicProvider(config.llm.default_model),
-            on_session_closed=self._engine_router.delete_thread,
+            provider_factory=lambda: self._provider_for_compaction(config),
+            on_session_closed=self._delete_session_resources,
+            recovery_store=self._recovery_store,
         )
 
         server = SocketServer(
@@ -500,12 +1253,23 @@ class CoreApp:
         server.register("session.send_message", self._session_send_handler)
         server.register("session.get_history", self._session_history_handler)
         server.register("session.close", self._session_close_handler)
+        server.register("session.resume", self._session_resume_handler)
+        server.register("run.get_state", self._run_get_state_handler)
         server.register("permission.respond", self._permission_respond_handler)
         server.register("session.compact", self._session_compact_handler)
 
         addr = await server.start()
         logger.info("agentrt-core %s listening addr=%s", agent_runtime.__version__, addr)
-        logger.info("config: %s", self._config)
+        logger.info(
+            "config: engine=%s checkpoint_backend=%s host=%s port=%d "
+            "trace_enabled=%s mcp_server_count=%d",
+            config.agent.engine,
+            config.graph.checkpoint_backend,
+            config.host,
+            config.port,
+            config.trace.enabled,
+            len(config.mcp.servers),
+        )
 
         loop = asyncio.get_running_loop()
         shutdown = asyncio.Event()

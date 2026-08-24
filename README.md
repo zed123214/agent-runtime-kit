@@ -1,6 +1,6 @@
 # Agent Runtime Kit
 
-面向本地自动化任务的 AI Agent 运行时框架，支持 daemon 常驻执行、类型化 IPC、实时事件流、工具权限控制、会话记忆、上下文压缩、子 Agent 以及 MCP 工具接入。
+面向本地自动化任务的 AI Agent 运行时框架，提供常驻 Agent Runtime Core、类型化 IPC、实时事件流、工具权限控制、会话记忆、上下文压缩、子 Agent 以及 MCP 工具接入。
 
 中文 | [English](README.en.md)
 
@@ -14,7 +14,7 @@
 
 现代 AI Agent 不应只是一次 LLM API 调用封装。一个可用的本地 Agent 运行时需要具备：长期运行的执行进程、类型化 IPC、可观察的事件流、安全的本地工具执行、可持久化的会话记忆，以及统一的扩展模型，用于接入工具、Skills、子 Agent 和 MCP Server。
 
-Agent Runtime Kit 使用 Python 实现这些 Agent Runtime 基础能力。当前 provider 实现基于 Anthropic 模型，但系统核心围绕 provider 边界设计：项目重点不是模型本身，而是模型外围的 daemon、通信协议、工具调用、权限审批、会话管理和事件基础设施。
+Agent Runtime Kit 使用 Python 实现这些 Agent Runtime 基础能力。当前 provider 实现基于 Anthropic 模型，但系统核心围绕 provider 边界设计：项目重点不是模型本身，而是模型外围的 Runtime Core、通信协议、工具调用、权限审批、会话管理和事件基础设施。
 
 ## 支持的运行环境
 
@@ -28,8 +28,7 @@ Agent Runtime Kit 使用 Python 实现这些 Agent Runtime 基础能力。当前
 graph TD
     User((开发者)) --> CLI["agentrt CLI"]
     User --> TUI["agentrt-tui"]
-
-    CLI -->|JSON-RPC 2.0 | Core["agentrt-core daemon"]
+    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core daemon (Runtime Core)"]
     TUI -->|订阅 / 回放事件| Core
 
     subgraph Runtime["Agent Runtime"]
@@ -63,7 +62,7 @@ graph TD
 
 ## 核心能力
 
-1. **Daemon + CLI/TUI 客户端架构**：daemon 集中管理会话、执行与事件状态；实时会话与创建连接绑定，断连时取消其在途工作，已持久化事件可凭强随机 Run ID 只读回放。
+1. **Runtime Core + CLI/TUI 客户端架构**：`agentrt-core` 常驻进程集中管理会话、执行与事件状态；实时会话与创建连接绑定，断连时取消其在途工作，已持久化事件可凭强随机 Run ID 只读回放。
 2. **类型化 IPC**：使用 Pydantic 建模请求、响应、错误和事件，并通过 JSON-RPC 2.0 over NDJSON TCP 暴露进程间通信协议。
 3. **协议文档自动生成**：`WIRE_PROTOCOL.md` 从源码协议模型生成，降低手写协议文档与代码实现发生漂移的风险。
 4. **可替换执行引擎**：`AgentRunner` 通过类型化 `ExecutionEngine` 边界运行默认 `loop` 引擎；可选 `graph` 引擎用显式 `model ↔ kit_tools` 状态图调度，同时复用既有模型、工具、权限、事件和 SessionStore 链路。
@@ -76,7 +75,7 @@ graph TD
 
 | 简历表述 | 仓库 |
 | --- | --- |
-| Daemon + CLI/TUI 多进程架构 | `src/agent_runtime/core/app.py`、`src/agent_runtime/cli/`、`src/agent_runtime/tui/`、`docs/architecture.md` |
+| Runtime Core + CLI/TUI 多进程架构 | `src/agent_runtime/core/app.py`、`src/agent_runtime/cli/`、`src/agent_runtime/tui/`、`docs/architecture.md` |
 | JSON-RPC 2.0 over NDJSON TCP | `src/agent_runtime/core/bus/`、`src/agent_runtime/core/transport/`、`WIRE_PROTOCOL.md` |
 | 类型安全的协议边界 | Pydantic 协议模型、strict `mypy`、自动生成的 `WIRE_PROTOCOL.md` |
 | 可观察事件流 | `EventBus`、`events.jsonl`、可回放的客户端事件订阅 |
@@ -133,7 +132,7 @@ uv run agentrt run --goal "Inspect this repository and summarize the project str
 uv run agentrt-tui
 ```
 
-### 可选 LangGraph 引擎（P1）
+### 可选 LangGraph 引擎与 SQLite 恢复（P1/P2）
 
 原快速开始保持 `loop` 默认值，不安装 Graph 依赖。Graph 只负责显式编排，
 KitAgent 继续负责 Provider、原生消息、工具与权限治理、事件、SessionStore 和
@@ -152,20 +151,33 @@ $env:AGENTRT_ENGINE = 'graph'
 uv run agentrt chat
 ```
 
-Graph P1 使用进程内 `InMemorySaver` 续接同一 Session，并按 thread 隔离；
-`thread.jsonl` 仍是权威会话记录。它不提供 daemon 重启恢复、外部 resume、
-interrupt/HITL 或 time travel。配置、四类预算、清理生命周期与离线演示见
-[Optional LangGraph Engine](docs/graph-engine.md)。
+默认 Graph backend 使用进程内 `InMemorySaver` 续接同一 Session，并按 thread
+隔离；`thread.jsonl` 仍是权威会话记录。需要 `agentrt-core` 重启恢复与人工审批续接时，
+显式启用 SQLite backend：
+
+```powershell
+uv sync --extra graph-sqlite
+$env:AGENTRT_ENGINE = 'graph'
+$env:AGENTRT_GRAPH_CHECKPOINT_BACKEND = 'sqlite'
+$env:AGENTRT_DATA_ROOT = 'D:\agentrt-data'
+uv run agentrt-core
+```
+
+P2 使用官方异步 SQLite saver 保存 Graph state/interrupt，以独立 RecoveryStore
+保存 capability hash、恢复 lease、transcript 提交进度和工具调用 journal；同一
+logical run 跨恢复沿用 run ID 与单调事件游标。配置与内存兼容见
+[Optional LangGraph Engine](docs/graph-engine.md)，完整恢复、HITL、崩溃窗口和边界见
+[Durable Graph Recovery and Human Approval](docs/durable-recovery.md)。
 
 ## 事件流示例
 
 ```json
-{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"goal":"...","ts":"..."}
-{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"token":"I","ts":"..."}
-{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
-{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
-{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
-{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
+{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":1,"goal":"...","ts":"..."}
+{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":2,"token":"I","ts":"..."}
+{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":3,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
+{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":4,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
+{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":5,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
+{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":6,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
 ```
 
 ## 仓库结构
@@ -180,12 +192,14 @@ agent-runtime-kit/
 |   |-- architecture.md
 |   |-- agent-loop.md
 |   |-- graph-engine.md
+|   |-- durable-recovery.md
 |   |-- tool-permissions.md
 |   |-- session-memory.md
 |   |-- skills-subagents-mcp.md
 |   `-- project-highlights.md
 |-- examples/
 |   |-- graph_offline_demo.py
+|   |-- durable_recovery_demo.py
 |   |-- basic_run/
 |   |-- permissions/
 |   |   `-- trace_permission_flow.py
@@ -226,18 +240,20 @@ agent-runtime-kit/
 基础安装不包含 LangGraph，可运行基础检查与非 Graph、非在线集成测试：
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest tests/ -m "not graph and not integration" -v
+uv run ruff check src tests scripts examples
+uv run ruff format --check src tests scripts examples
+uv run pytest tests/ -m "not graph and not recovery and not integration" -v
 uv run python scripts/check_wire_protocol.py --check
 ```
 
-完整源码类型检查会检查可选 Graph 模块，因此需先安装 Graph extra：
+完整源码类型检查会检查 SQLite recovery 模块，因此需安装 graph-sqlite extra：
 
 ```bash
 uv sync --extra graph
+uv run pytest tests/ -m "graph and not recovery and not integration" -v
+uv sync --extra graph-sqlite
 uv run mypy src
-uv run pytest tests/ -v
+uv run pytest tests/ -m "recovery and not integration" --strict-markers -v
 ```
 
 原生 Windows 下，如果 `uv` 脚本入口出现 trampoline path 错误，可以改用 Python 模块方式运行工具：
@@ -258,6 +274,7 @@ uv run python scripts/generate_wire_protocol.py
 - [Architecture](docs/architecture.md)
 - [Agent Loop](docs/agent-loop.md)
 - [Optional LangGraph Engine](docs/graph-engine.md)
+- [Durable Graph Recovery and Human Approval](docs/durable-recovery.md)
 - [Tool Permissions](docs/tool-permissions.md)
 - [Session Memory](docs/session-memory.md)
 - [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Discriminator
+from pydantic import BaseModel, Discriminator, Field
 
 from agent_runtime.core.context import TerminalStatus
 
@@ -18,6 +18,7 @@ class RunEvent(BaseModel):
     correlation_id: str | None = None
     session_id: str | None = None
     node_id: str | None = None
+    event_seq: int | None = Field(default=None, ge=1)
 
 
 class CoreStartedEvent(BaseModel):
@@ -38,6 +39,24 @@ class RunFinishedEvent(RunEvent):
     reason: str | None = None  # "exceeded_max_steps" | "cancelled" | "llm_error" | ...
     steps: int
     error: dict[str, Any] | None = None
+    ts: str
+
+
+class RunSuspendedEvent(RunEvent):
+    type: Literal["run.suspended"] = "run.suspended"
+    session_id: str
+    reason: Literal["permission", "process_recovery", "outcome_unknown"]
+    checkpoint_revision: str
+    interrupt_id: str | None = None
+    ts: str
+
+
+class RunResumedEvent(RunEvent):
+    type: Literal["run.resumed"] = "run.resumed"
+    session_id: str
+    checkpoint_revision: str
+    resume_epoch: int = Field(ge=1)
+    interrupt_id: str | None = None
     ts: str
 
 
@@ -187,6 +206,9 @@ class PermissionRequestedEvent(RunEvent):
     params: dict[str, Any]
     param_preview: str
     session_id: str
+    interrupt_id: str | None = None
+    checkpoint_revision: str | None = None
+    expires_at: str | None = None
     ts: str
 
 
@@ -232,6 +254,8 @@ Event = Annotated[
     CoreStartedEvent
     | RunStartedEvent
     | RunFinishedEvent
+    | RunSuspendedEvent
+    | RunResumedEvent
     | StepStartedEvent
     | StepFinishedEvent
     | NodeStartedEvent

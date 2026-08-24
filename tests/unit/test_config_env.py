@@ -4,13 +4,20 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime.core.config import RuntimeConfig, get_config
+from agent_runtime.core.config import (
+    RuntimeConfig,
+    get_config,
+    resolve_data_root,
+    resolve_graph_checkpoint_path,
+)
 
 _GRAPH_ENV_NAMES = (
     "AGENTRT_GRAPH_RECURSION_LIMIT",
     "AGENTRT_GRAPH_TOOL_CALL_BUDGET",
     "AGENTRT_GRAPH_WALL_TIME_S",
     "AGENTRT_GRAPH_TRACE_EVENT_LIMIT",
+    "AGENTRT_GRAPH_CHECKPOINT_BACKEND",
+    "AGENTRT_GRAPH_CHECKPOINT_PATH",
 )
 
 
@@ -101,6 +108,54 @@ def test_graph_config_defaults() -> None:
     assert graph.tool_call_budget == 64
     assert graph.wall_time_s == 300.0
     assert graph.trace_event_limit == 64
+    assert graph.checkpoint_backend == "memory"
+    assert graph.checkpoint_path is None
+
+
+def test_sqlite_checkpoint_path_is_resolved_inside_data_root(tmp_path: Path) -> None:
+    data_root = tmp_path / "daemon-data"
+    config = RuntimeConfig(data_root=str(data_root))
+    config.graph.checkpoint_backend = "sqlite"
+    config.graph.checkpoint_path = "state/checkpoints.sqlite3"
+
+    resolved_root = resolve_data_root(config)
+    checkpoint_path = resolve_graph_checkpoint_path(config, resolved_root)
+
+    assert checkpoint_path == (data_root / "state" / "checkpoints.sqlite3").resolve()
+
+
+def test_sqlite_checkpoint_path_cannot_escape_data_root(tmp_path: Path) -> None:
+    data_root = tmp_path / "daemon-data"
+    config = RuntimeConfig(data_root=str(data_root))
+    config.graph.checkpoint_backend = "sqlite"
+    config.graph.checkpoint_path = str(tmp_path / "outside.sqlite3")
+
+    with pytest.raises(SystemExit, match="must resolve inside core.data_root"):
+        resolve_graph_checkpoint_path(config, resolve_data_root(config))
+
+
+def test_data_root_and_sqlite_backend_load_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "daemon-data"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENTRT_CONFIG", raising=False)
+    monkeypatch.setenv("AGENTRT_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("AGENTRT_GRAPH_CHECKPOINT_BACKEND", "sqlite")
+    monkeypatch.setenv("AGENTRT_GRAPH_CHECKPOINT_PATH", "checkpoint.sqlite3")
+
+    config = get_config()
+    resolved_root = resolve_data_root(config)
+
+    assert resolved_root == data_root.resolve()
+    assert config.graph.checkpoint_backend == "sqlite"
+    assert (
+        resolve_graph_checkpoint_path(config, resolved_root)
+        == (data_root / "checkpoint.sqlite3").resolve()
+    )
+    assert Path(config.logging.file) == data_root / "logs" / "core.log"
+    assert Path(config.trace.file) == data_root / "traces" / "daemon.jsonl"
 
 
 def test_graph_config_loads_toml_and_environment_override(

@@ -186,6 +186,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 | `topics` | `array` | yes |
 | `scope` | `string` | no |
 | `replay_from_run` | `string | null` | no |
+| `after_event_seq` | `integer` | no |
 
 ```json
 {
@@ -219,6 +220,12 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
       ],
       "default": null,
       "title": "Replay From Run"
+    },
+    "after_event_seq": {
+      "default": 0,
+      "minimum": 0,
+      "title": "After Event Seq",
+      "type": "integer"
     }
   },
   "required": [
@@ -244,7 +251,8 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
       "llm.token"
     ],
     "scope": "global",
-    "replay_from_run": null
+    "replay_from_run": null,
+    "after_event_seq": 0
   }
 }
 ```
@@ -347,6 +355,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 |---|---|---|
 | `session_id` | `string` | yes |
 | `status` | `string` | yes |
+| `resume_token` | `string | null` | no |
 
 ```json
 {
@@ -359,10 +368,23 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
       "enum": [
         "active",
         "waiting_for_input",
+        "suspended",
         "closed"
       ],
       "title": "Status",
       "type": "string"
+    },
+    "resume_token": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resume Token"
     }
   },
   "required": [
@@ -382,7 +404,8 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
   "id": "u-4",
   "result": {
     "session_id": "sess-abc123def456",
-    "status": "active"
+    "status": "active",
+    "resume_token": "<opaque-resume-capability>"
   }
 }
 ```
@@ -567,6 +590,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
       "enum": [
         "active",
         "waiting_for_input",
+        "suspended",
         "closed"
       ],
       "title": "Status",
@@ -581,12 +605,374 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 }
 ```
 
+### SessionResumeCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+| `resume_token` | `string` | yes |
+| `expected_revision` | `string | null` | no |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "session.resume",
+      "default": "session.resume",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "resume_token": {
+      "title": "Resume Token",
+      "type": "string"
+    },
+    "expected_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Revision"
+    }
+  },
+  "required": [
+    "session_id",
+    "resume_token"
+  ],
+  "title": "SessionResumeCommand",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-6",
+  "method": "session.resume",
+  "params": {
+    "session_id": "sess-abc123def456",
+    "resume_token": "<opaque-resume-capability>",
+    "expected_revision": "checkpoint-revision-7"
+  }
+}
+```
+
+### SessionResumeResult
+
+| Field | Type | Required |
+|---|---|---|
+| `session_id` | `string` | yes |
+| `run_id` | `string | null` | no |
+| `status` | `string` | yes |
+| `suspension_reason` | `string | null` | no |
+| `checkpoint_revision` | `string | null` | no |
+| `event_seq` | `integer` | yes |
+| `next_resume_token` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "suspension_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Suspension Reason"
+    },
+    "checkpoint_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checkpoint Revision"
+    },
+    "event_seq": {
+      "minimum": 0,
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "next_resume_token": {
+      "title": "Next Resume Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "status",
+    "event_seq",
+    "next_resume_token"
+  ],
+  "title": "SessionResumeResult",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-6",
+  "result": {
+    "session_id": "sess-abc123def456",
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+    "status": "suspended",
+    "suspension_reason": "permission",
+    "checkpoint_revision": "checkpoint-revision-7",
+    "event_seq": 8,
+    "next_resume_token": "<rotated-resume-capability>"
+  }
+}
+```
+
+### RunGetStateCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+| `run_id` | `string | null` | no |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "run.get_state",
+      "default": "run.get_state",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    }
+  },
+  "required": [
+    "session_id"
+  ],
+  "title": "RunGetStateCommand",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-7",
+  "method": "run.get_state",
+  "params": {
+    "session_id": "sess-abc123def456",
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890"
+  }
+}
+```
+
+### RunGetStateResult
+
+| Field | Type | Required |
+|---|---|---|
+| `session_id` | `string` | yes |
+| `run_id` | `string` | yes |
+| `status` | `string` | yes |
+| `current_node` | `string | null` | no |
+| `next_node` | `string | null` | no |
+| `suspension_reason` | `string | null` | no |
+| `checkpoint_revision` | `string | null` | no |
+| `event_seq` | `integer` | yes |
+| `pending_approval_summary` | `object | null` | no |
+| `resumable` | `boolean` | yes |
+
+```json
+{
+  "properties": {
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "current_node": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Node"
+    },
+    "next_node": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Node"
+    },
+    "suspension_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Suspension Reason"
+    },
+    "checkpoint_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checkpoint Revision"
+    },
+    "event_seq": {
+      "minimum": 0,
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "pending_approval_summary": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pending Approval Summary"
+    },
+    "resumable": {
+      "title": "Resumable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "run_id",
+    "status",
+    "event_seq",
+    "resumable"
+  ],
+  "title": "RunGetStateResult",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "u-7",
+  "result": {
+    "session_id": "sess-abc123def456",
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+    "status": "suspended",
+    "current_node": "kit_tools",
+    "next_node": "kit_tools",
+    "suspension_reason": "permission",
+    "checkpoint_revision": "checkpoint-revision-7",
+    "event_seq": 8,
+    "pending_approval_summary": {
+      "tool_use_id": "toolu_03",
+      "tool_name": "bash",
+      "param_preview": "command='git status --short'",
+      "interrupt_id": "interrupt-7"
+    },
+    "resumable": true
+  }
+}
+```
+
 ### PermissionRespondCommand
 
 | Field | Type | Required |
 |---|---|---|
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
+| `session_id` | `string | null` | no |
+| `run_id` | `string | null` | no |
+| `interrupt_id` | `string | null` | no |
+| `expected_revision` | `string | null` | no |
 | `decision` | `string` | yes |
 
 ```json
@@ -601,6 +987,54 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
     "tool_use_id": {
       "title": "Tool Use Id",
       "type": "string"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "interrupt_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Interrupt Id"
+    },
+    "expected_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Revision"
     },
     "decision": {
       "title": "Decision",
@@ -621,10 +1055,14 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "u-6",
+  "id": "u-8",
   "method": "permission.respond",
   "params": {
+    "session_id": "sess-abc123def456",
+    "run_id": "20260516-100000-abc123def4567890abc123def4567890",
     "tool_use_id": "toolu_03",
+    "interrupt_id": "interrupt-7",
+    "expected_revision": "checkpoint-revision-7",
     "decision": "allow_once"
   }
 }
@@ -655,7 +1093,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "u-6",
+  "id": "u-8",
   "result": {
     "ok": true
   }
@@ -702,7 +1140,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "u-7",
+  "id": "u-9",
   "method": "session.compact",
   "params": {
     "session_id": "sess-abc123def456",
@@ -744,7 +1182,7 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "u-7",
+  "id": "u-9",
   "result": {
     "summary_tokens": 1800,
     "saved_tokens": 10200
@@ -844,7 +1282,7 @@ Events sent over the IPC socket (daemon → client).
 
 ## Run Events
 
-Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients. Run-scoped payloads preserve their existing `type` and fields while adding optional `correlation_id`, `session_id`, and `node_id` metadata. `correlation_id` identifies the root run across child runs, `session_id` is populated only when a session exists, and `node_id` is populated only for a real engine node. Older payloads without these fields remain valid.
+Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscribed clients. Run-scoped payloads preserve their existing `type` and fields while adding optional `correlation_id`, `session_id`, `node_id`, and `event_seq` metadata. `correlation_id` identifies the root run across child runs, `session_id` is populated only when a session exists, `node_id` only for a real engine node, and `event_seq` is the durable per-run cursor. Older payloads without these fields remain valid.
 
 `llm.reasoning`, `node.*`, and `state.diff` are typed boundaries reserved for engines that produce those facts. The default loop engine does not synthesize them.
 
@@ -856,6 +1294,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `goal` | `string` | yes |
 | `ts` | `string` | yes |
@@ -902,6 +1341,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "run.started",
@@ -950,6 +1402,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `status` | `object` | yes |
 | `reason` | `string | null` | no |
@@ -1008,6 +1461,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "run.finished",
@@ -1079,6 +1545,258 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 }
 ```
 
+### RunSuspendedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string` | yes |
+| `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
+| `type` | `string` | no |
+| `reason` | `string` | yes |
+| `checkpoint_revision` | `string` | yes |
+| `interrupt_id` | `string | null` | no |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
+    },
+    "type": {
+      "const": "run.suspended",
+      "default": "run.suspended",
+      "title": "Type",
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "permission",
+        "process_recovery",
+        "outcome_unknown"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "checkpoint_revision": {
+      "title": "Checkpoint Revision",
+      "type": "string"
+    },
+    "interrupt_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Interrupt Id"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "session_id",
+    "reason",
+    "checkpoint_revision",
+    "ts"
+  ],
+  "title": "RunSuspendedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "run.suspended",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "reason": "permission",
+  "checkpoint_revision": "checkpoint-revision-7",
+  "interrupt_id": "interrupt-7",
+  "event_seq": 8,
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
+### RunResumedEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string` | yes |
+| `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
+| `type` | `string` | no |
+| `checkpoint_revision` | `string` | yes |
+| `resume_epoch` | `integer` | yes |
+| `interrupt_id` | `string | null` | no |
+| `ts` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
+    },
+    "type": {
+      "const": "run.resumed",
+      "default": "run.resumed",
+      "title": "Type",
+      "type": "string"
+    },
+    "checkpoint_revision": {
+      "title": "Checkpoint Revision",
+      "type": "string"
+    },
+    "resume_epoch": {
+      "minimum": 1,
+      "title": "Resume Epoch",
+      "type": "integer"
+    },
+    "interrupt_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Interrupt Id"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "session_id",
+    "checkpoint_revision",
+    "resume_epoch",
+    "ts"
+  ],
+  "title": "RunResumedEvent",
+  "type": "object"
+}
+```
+
+**Example:**
+
+```json
+{
+  "type": "run.resumed",
+  "run_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "correlation_id": "20260516-100000-abc123def4567890abc123def4567890",
+  "session_id": "sess-abc123def456",
+  "node_id": null,
+  "checkpoint_revision": "checkpoint-revision-7",
+  "resume_epoch": 1,
+  "interrupt_id": "interrupt-7",
+  "event_seq": 9,
+  "ts": "2026-05-16T10:00:00.001Z"
+}
+```
+
 ### StepStartedEvent
 
 | Field | Type | Required |
@@ -1087,6 +1805,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `step` | `integer` | yes |
 | `ts` | `string` | yes |
@@ -1133,6 +1852,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "step.started",
@@ -1181,6 +1913,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `step` | `integer` | yes |
 | `ts` | `string` | yes |
@@ -1227,6 +1960,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "step.finished",
@@ -1275,6 +2021,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string` | yes |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `ts` | `string` | yes |
 
@@ -1312,6 +2059,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
     "node_id": {
       "title": "Node Id",
       "type": "string"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "node.started",
@@ -1355,6 +2115,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string` | yes |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `status` | `string` | yes |
 | `ts` | `string` | yes |
@@ -1393,6 +2154,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
     "node_id": {
       "title": "Node Id",
       "type": "string"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "node.finished",
@@ -1442,6 +2216,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string` | yes |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `diff` | `object` | yes |
 | `ts` | `string` | yes |
@@ -1480,6 +2255,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
     "node_id": {
       "title": "Node Id",
       "type": "string"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "state.diff",
@@ -1533,6 +2321,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
@@ -1581,6 +2370,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "tool.call_started",
@@ -1644,6 +2446,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
@@ -1693,6 +2496,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "tool.call_finished",
@@ -1758,6 +2574,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
@@ -1809,6 +2626,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "tool.call_failed",
@@ -1887,6 +2717,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `model` | `string` | yes |
 | `strategy` | `string` | yes |
@@ -1934,6 +2765,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "llm.model_selected",
@@ -1988,6 +2832,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `token` | `string` | yes |
 | `ts` | `string` | yes |
@@ -2034,6 +2879,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "llm.token",
@@ -2082,6 +2940,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `reasoning` | `string` | yes |
 | `ts` | `string` | yes |
@@ -2128,6 +2987,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "llm.reasoning",
@@ -2176,6 +3048,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `input_tokens` | `integer` | yes |
 | `output_tokens` | `integer` | yes |
@@ -2226,6 +3099,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "llm.usage",
@@ -2297,6 +3183,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `level` | `string` | yes |
 | `source` | `string` | yes |
@@ -2345,6 +3232,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "log.line",
@@ -2405,6 +3305,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string` | yes |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `original_tokens` | `integer` | yes |
 | `summary_tokens` | `integer` | yes |
@@ -2444,6 +3345,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "context.compacted",
@@ -2501,11 +3415,15 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string` | yes |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `tool_name` | `string` | yes |
 | `params` | `object` | yes |
 | `param_preview` | `string` | yes |
+| `interrupt_id` | `string | null` | no |
+| `checkpoint_revision` | `string | null` | no |
+| `expires_at` | `string | null` | no |
 | `ts` | `string` | yes |
 
 ```json
@@ -2543,6 +3461,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       "default": null,
       "title": "Node Id"
     },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
+    },
     "type": {
       "const": "permission.requested",
       "default": "permission.requested",
@@ -2565,6 +3496,42 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
     "param_preview": {
       "title": "Param Preview",
       "type": "string"
+    },
+    "interrupt_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Interrupt Id"
+    },
+    "checkpoint_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checkpoint Revision"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
     },
     "ts": {
       "title": "Ts",
@@ -2612,6 +3579,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `decision` | `string` | yes |
@@ -2659,6 +3627,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "permission.granted",
@@ -2713,6 +3694,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `tool_use_id` | `string` | yes |
 | `decision` | `string` | yes |
@@ -2760,6 +3742,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "permission.denied",
@@ -2816,6 +3811,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `parent_run_id` | `string` | yes |
 | `description` | `string` | yes |
@@ -2863,6 +3859,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "subagent.started",
@@ -2917,6 +3926,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `parent_run_id` | `string` | yes |
 | `status` | `string` | yes |
@@ -2964,6 +3974,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "subagent.finished",
@@ -3018,6 +4041,7 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 | `correlation_id` | `string | null` | no |
 | `session_id` | `string | null` | no |
 | `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
 | `type` | `string` | no |
 | `skill_name` | `string` | yes |
 | `arguments` | `string` | yes |
@@ -3065,6 +4089,19 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
       ],
       "default": null,
       "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
     },
     "type": {
       "const": "skill.invoked",

@@ -20,6 +20,10 @@ dependencies = [
 graph = [
     "langgraph==1.2.8",
 ]
+graph-sqlite = [
+    "langgraph==1.2.8",
+    "langgraph-checkpoint-sqlite==3.1.1",
+]
 
 [project.scripts]
 agentrt = "agent_runtime.cli.main:main"
@@ -61,5 +65,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "graph: marks offline tests that require the optional graph extra",
+    "recovery: marks offline tests that require the optional graph-sqlite extra",
     "integration: marks tests that call the real Anthropic API (require ANTHROPIC_API_KEY)",
 ]

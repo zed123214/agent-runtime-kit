@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, cast, runtime_checkable
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from agent_runtime.core.context import ExecutionContext, TerminalStatus
 from agent_runtime.core.events.bus import EventBus
@@ -20,6 +20,10 @@ class EngineRunConfig:
     tool_call_budget: int = 64
     wall_time_s: float = 300.0
     trace_event_limit: int = 64
+    expected_checkpoint_revision: str | None = None
+    resume_value: object | None = None
+    event_seq: int = 0
+    durable_recovery: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +59,7 @@ class RunOutcome:
     reason: str | None
     steps: int = 0
     error: EngineErrorDetail | None = None
+    checkpoint_revision: str | None = None
 
     @classmethod
     def from_context(
@@ -62,6 +67,7 @@ class RunOutcome:
         context: ExecutionContext,
         *,
         error: EngineErrorDetail | None = None,
+        checkpoint_revision: str | None = None,
     ) -> RunOutcome:
         return cls(
             # Engine adapters call this after orchestration finishes. AgentRunner
@@ -72,7 +78,26 @@ class RunOutcome:
             reason=context.reason,
             steps=context.step,
             error=error,
+            checkpoint_revision=checkpoint_revision,
         )
+
+
+type SuspensionReason = Literal["permission", "process_recovery", "outcome_unknown"]
+
+
+@dataclass(frozen=True, slots=True)
+class RunSuspension:
+    """Non-terminal durable Graph result returned to the runner."""
+
+    run_id: str
+    session_id: str
+    reason: SuspensionReason
+    checkpoint_revision: str
+    interrupt_id: str | None
+    event_seq: int
+
+
+type EngineRunResult = RunOutcome | RunSuspension
 
 
 class ExecutionEngineError(RuntimeError):
@@ -136,7 +161,7 @@ class ExecutionEngine(Protocol):
         tools: ToolRegistry,
         events: EventBus,
         config: EngineRunConfig,
-    ) -> RunOutcome: ...
+    ) -> EngineRunResult: ...
 
     async def resume(
         self,
@@ -145,6 +170,6 @@ class ExecutionEngine(Protocol):
         tools: ToolRegistry,
         events: EventBus,
         config: EngineRunConfig,
-    ) -> RunOutcome: ...
+    ) -> EngineRunResult: ...
 
     async def cancel(self) -> None: ...

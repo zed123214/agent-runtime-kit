@@ -1,8 +1,8 @@
 # Agent Runtime Kit
 
-Local AI Agent runtime framework with daemon execution, typed IPC, event
-streaming, tool permissions, session memory, context compaction, subagents, and
-MCP tools.
+Local AI Agent runtime framework with a long-running Agent Runtime Core, typed
+IPC, event streaming, tool permissions, session memory, context compaction,
+subagents, and MCP tools.
 
 [中文](README.md) | English
 
@@ -21,7 +21,7 @@ skills, subagents, and MCP servers.
 
 Agent Runtime Kit implements those runtime primitives in Python. The current
 provider implementation uses Anthropic models, but the core runtime is designed
-around provider boundaries: the main value is the daemon, protocol, tool,
+around provider boundaries: the main value is the runtime core, protocol, tool,
 permission, session, and event infrastructure around the model.
 
 ## Supported Runtime
@@ -40,7 +40,7 @@ graph TD
     User((Developer)) --> CLI["agentrt CLI"]
     User --> TUI["agentrt-tui"]
 
-    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core daemon"]
+    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core (Runtime Core)"]
     TUI -->|subscribe / replay events| Core
 
     subgraph Runtime["Agent Runtime"]
@@ -74,8 +74,8 @@ graph TD
 
 ## Core Capabilities
 
-1. **Daemon + CLI/TUI clients**: the daemon centrally manages session,
-   execution, and event state. Live sessions are bound to their creating
+1. **Runtime Core + CLI/TUI clients**: the long-running `agentrt-core` process
+   centrally manages session, execution, and event state. Live sessions are bound to their creating
    connection; disconnects cancel in-flight work, while persisted events remain
    available for read-only replay through a strong random run ID.
 2. **Typed IPC**: requests, responses, errors, and events are modeled with
@@ -99,7 +99,7 @@ graph TD
 
 | Resume claim | Evidence in this repository |
 | --- | --- |
-| Daemon + CLI/TUI multi-process architecture | `src/agent_runtime/core/app.py`, `src/agent_runtime/cli/`, `src/agent_runtime/tui/`, `docs/architecture.md` |
+| Runtime Core + CLI/TUI multi-process architecture | `src/agent_runtime/core/app.py`, `src/agent_runtime/cli/`, `src/agent_runtime/tui/`, `docs/architecture.md` |
 | JSON-RPC 2.0 over NDJSON TCP | `src/agent_runtime/core/bus/`, `src/agent_runtime/core/transport/`, `WIRE_PROTOCOL.md` |
 | Type-safe protocol boundary | Pydantic protocol models, strict `mypy`, generated `WIRE_PROTOCOL.md` |
 | Observable event stream | `EventBus`, `events.jsonl`, replayable client subscriptions |
@@ -157,7 +157,7 @@ uv run agentrt run --goal "Inspect this repository and summarize the project str
 uv run agentrt-tui
 ```
 
-### Optional LangGraph engine (P1)
+### Optional LangGraph engine and SQLite recovery (P1/P2)
 
 The original Quick Start remains on `loop` and installs no Graph dependency.
 LangGraph owns explicit orchestration only; KitAgent continues to own providers,
@@ -177,21 +177,35 @@ $env:AGENTRT_ENGINE = 'graph'
 uv run agentrt chat
 ```
 
-Graph P1 uses process-local `InMemorySaver` state to continue one Session and
-isolate threads; `thread.jsonl` remains authoritative. It does not provide
-daemon-restart recovery, external resume, interrupt/HITL, or time travel. See
-[Optional LangGraph Engine](docs/graph-engine.md) for configuration, four
-budgets, cleanup lifecycle, and the offline demo.
+The default Graph backend uses process-local `InMemorySaver` state to continue
+one Session and isolate threads; `thread.jsonl` remains authoritative. Enable
+the SQLite backend explicitly for `agentrt-core` restart recovery and human
+approval:
+
+```powershell
+uv sync --extra graph-sqlite
+$env:AGENTRT_ENGINE = 'graph'
+$env:AGENTRT_GRAPH_CHECKPOINT_BACKEND = 'sqlite'
+$env:AGENTRT_DATA_ROOT = 'D:\agentrt-data'
+uv run agentrt-core
+```
+
+P2 uses the official async SQLite saver for Graph state and interrupts, plus a
+separate RecoveryStore for capability hashes, resume leases, transcript commit
+progress, and the tool journal. A logical run keeps its run ID and monotonic
+event cursor across resume attempts. See [Optional LangGraph Engine](docs/graph-engine.md)
+for memory compatibility and [Durable Graph Recovery and Human Approval](docs/durable-recovery.md)
+for recovery, HITL, crash-window, and scope details.
 
 ## Event Stream Example
 
 ```json
-{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"goal":"...","ts":"..."}
-{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"token":"I","ts":"..."}
-{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
-{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
-{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
-{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
+{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":1,"goal":"...","ts":"..."}
+{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":2,"token":"I","ts":"..."}
+{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":3,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
+{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":4,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
+{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":5,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
+{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":6,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
 ```
 
 ## Repository Map
@@ -206,12 +220,14 @@ agent-runtime-kit/
 |   |-- architecture.md
 |   |-- agent-loop.md
 |   |-- graph-engine.md
+|   |-- durable-recovery.md
 |   |-- tool-permissions.md
 |   |-- session-memory.md
 |   |-- skills-subagents-mcp.md
 |   `-- project-highlights.md
 |-- examples/
 |   |-- graph_offline_demo.py
+|   |-- durable_recovery_demo.py
 |   |-- basic_run/
 |   |-- permissions/
 |   |   `-- trace_permission_flow.py
@@ -253,19 +269,21 @@ The base install excludes LangGraph. It supports the base checks and tests that
 are neither Graph-specific nor online integration tests:
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest tests/ -m "not graph and not integration" -v
+uv run ruff check src tests scripts examples
+uv run ruff format --check src tests scripts examples
+uv run pytest tests/ -m "not graph and not recovery and not integration" -v
 uv run python scripts/check_wire_protocol.py --check
 ```
 
-The full source type check includes the optional Graph modules, so install the
-Graph extra first:
+The full source type check includes the SQLite recovery modules, so install the
+graph-sqlite extra before running Mypy:
 
 ```bash
 uv sync --extra graph
+uv run pytest tests/ -m "graph and not recovery and not integration" -v
+uv sync --extra graph-sqlite
 uv run mypy src
-uv run pytest tests/ -v
+uv run pytest tests/ -m "recovery and not integration" --strict-markers -v
 ```
 
 On native Windows, if `uv` script entry points fail with a trampoline path
@@ -287,6 +305,7 @@ uv run python scripts/generate_wire_protocol.py
 - [Architecture](docs/architecture.md)
 - [Agent Loop](docs/agent-loop.md)
 - [Optional LangGraph Engine](docs/graph-engine.md)
+- [Durable Graph Recovery and Human Approval](docs/durable-recovery.md)
 - [Tool Permissions](docs/tool-permissions.md)
 - [Session Memory](docs/session-memory.md)
 - [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)

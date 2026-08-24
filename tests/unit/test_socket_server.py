@@ -4,13 +4,50 @@ import asyncio
 import json
 import socket
 
-from agent_runtime.core.transport.socket_server import SocketServer, get_connection_writer
+from agent_runtime.core.transport.socket_server import (
+    SocketServer,
+    get_connection_writer,
+    redact_sensitive_fields,
+)
 
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def test_resume_capabilities_are_recursively_redacted_from_trace_payloads() -> None:
+    raw = {
+        "params": {"resume_token": "secret-current"},
+        "result": [{"next_resume_token": "secret-next", "token": "visible-llm-token"}],
+    }
+
+    redacted = redact_sensitive_fields(raw)
+
+    assert redacted == {
+        "params": {"resume_token": "[REDACTED]"},
+        "result": [{"next_resume_token": "[REDACTED]", "token": "visible-llm-token"}],
+    }
+    assert raw["params"]["resume_token"] == "secret-current"
+
+
+def test_tool_credentials_are_redacted_from_trace_payloads() -> None:
+    raw = {
+        "params": {
+            "api_key": "SECRET-KEY",
+            "command": "curl -H 'Authorization: Bearer SECRET-TOKEN' example.test",
+            "nested": {"password": "SECRET-PASSWORD"},
+        }
+    }
+
+    redacted = redact_sensitive_fields(raw)
+
+    rendered = repr(redacted)
+    assert "SECRET-KEY" not in rendered
+    assert "SECRET-TOKEN" not in rendered
+    assert "SECRET-PASSWORD" not in rendered
+    assert rendered.count("[REDACTED]") == 3
 
 
 # 功能：验证客户端断开后 SocketServer 调用 broadcaster.disconnect(writer) 清理订阅

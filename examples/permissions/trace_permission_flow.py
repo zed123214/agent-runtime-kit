@@ -10,6 +10,7 @@
 
 运行：uv run python examples/permissions/trace_permission_flow.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,10 +76,13 @@ async def main() -> None:
                     tool_use_id = event["tool_use_id"]
                     print(f"\n  *** 收到 permission.requested  tool={event['tool_name']}")
                     print(f"      param_preview={event.get('param_preview')!r}")
-                    print(f"      → 自动回复 allow_once\n")
+                    print("      → 自动回复 allow_once\n")
                     # 直接在读循环里发 permission.respond
-                    req_id2 = await send(writer, "permission.respond",
-                                         {"tool_use_id": tool_use_id, "decision": "allow_once"})
+                    req_id2 = await send(
+                        writer,
+                        "permission.respond",
+                        {"tool_use_id": tool_use_id, "decision": "allow_once"},
+                    )
                     fut2: asyncio.Future[dict[str, Any]] = loop.create_future()
                     pending[req_id2] = fut2
 
@@ -88,11 +92,23 @@ async def main() -> None:
     read_task = asyncio.create_task(read_loop())
 
     # ── subscribe ─────────────────────────────────────────────────────
-    sub_id = await send(writer, "event.subscribe", {
-        "topics": ["session.*", "run.*", "step.*", "tool.*",
-                   "llm.token", "llm.usage", "log.*", "permission.*"],
-        "scope": "global",
-    })
+    sub_id = await send(
+        writer,
+        "event.subscribe",
+        {
+            "topics": [
+                "session.*",
+                "run.*",
+                "step.*",
+                "tool.*",
+                "llm.token",
+                "llm.usage",
+                "log.*",
+                "permission.*",
+            ],
+            "scope": "global",
+        },
+    )
     sub_fut: asyncio.Future[dict[str, Any]] = loop.create_future()
     pending[sub_id] = sub_fut
     sub_result = await sub_fut
@@ -108,8 +124,11 @@ async def main() -> None:
 
     # ── session.send_message ──────────────────────────────────────────
     print(f"\n[send]      goal={GOAL!r}\n")
-    msg_id = await send(writer, "session.send_message",
-                        {"session_id": session_id, "content": GOAL})
+    msg_id = await send(
+        writer,
+        "session.send_message",
+        {"session_id": session_id, "content": GOAL},
+    )
     msg_fut: asyncio.Future[dict[str, Any]] = loop.create_future()
     pending[msg_id] = msg_fut
 
@@ -124,7 +143,7 @@ async def main() -> None:
 
     print("\n── 汇总 ──")
     types = [e.get("type") for e in events_log]
-    for t in dict.fromkeys(types):   # preserve order, deduplicate
+    for t in dict.fromkeys(types):  # preserve order, deduplicate
         cnt = types.count(t)
         print(f"  {t:40s} × {cnt}")
 

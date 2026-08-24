@@ -1,4 +1,4 @@
-# Optional LangGraph Engine (P1)
+# Optional LangGraph Engine (P1/P2)
 
 KitAgent has two execution engines behind the same `ExecutionEngine` boundary:
 
@@ -10,7 +10,7 @@ KitAgent has two execution engines behind the same `ExecutionEngine` boundary:
 LangGraph does not replace the host runtime or its governance. `AgentRunner`
 still owns `run.started`, the single `run.finished`, JSONL persistence, and
 session transcript updates. The Graph engine owns only node scheduling and its
-process-local orchestration state.
+checkpointed orchestration state.
 
 ## Install and select the engine
 
@@ -45,10 +45,12 @@ eagerly import LangGraph.
 ## Configuration
 
 Graph-specific settings can be supplied through `[graph]` or environment
-variables. Every explicit value must be greater than zero.
+variables. Numeric budget values must be greater than zero.
 
 | TOML key | Environment variable | Default | Meaning |
 | --- | --- | --- | --- |
+| `checkpoint_backend` | `AGENTRT_GRAPH_CHECKPOINT_BACKEND` | `memory` | `memory` for P1 compatibility or opt-in `sqlite` durability |
+| `checkpoint_path` | `AGENTRT_GRAPH_CHECKPOINT_PATH` | `graph-checkpoints.sqlite3` inside the data root | Daemon-owned SQLite saver path |
 | `recursion_limit` | `AGENTRT_GRAPH_RECURSION_LIMIT` | `2 * max_steps + 1` | LangGraph superstep limit |
 | `tool_call_budget` | `AGENTRT_GRAPH_TOOL_CALL_BUDGET` | `64` | Maximum root tool calls submitted during one run |
 | `wall_time_s` | `AGENTRT_GRAPH_WALL_TIME_S` | `300.0` | End-to-end Graph run deadline in seconds |
@@ -58,6 +60,7 @@ Example:
 
 ```toml
 [graph]
+checkpoint_backend = "memory"
 recursion_limit = 41
 tool_call_budget = 64
 wall_time_s = 300.0
@@ -65,7 +68,22 @@ trace_event_limit = 64
 ```
 
 `trace_event_limit` bounds observation metadata; it is not an execution budget
-and does not terminate a run.
+and does not terminate a run. The daemon data root defaults to `~/.agentrt` and
+can be changed with `AGENTRT_DATA_ROOT`. A configured checkpoint path is accepted
+only when its resolved location remains inside that root.
+
+The memory extra remains:
+
+```powershell
+uv sync --extra graph
+```
+
+The durable backend has its own extra:
+
+```powershell
+uv sync --extra graph-sqlite
+$env:AGENTRT_GRAPH_CHECKPOINT_BACKEND = 'sqlite'
+```
 
 ## Explicit graph
 
@@ -82,7 +100,9 @@ The `model` node calls the existing `LLMProvider.chat()` with KitAgent's system
 prompt and tool schemas. It creates pending calls but never executes them. The
 ordinary asynchronous `KitToolNode` executes calls in model order through the
 existing `invoke_tool()` path, preserving schema validation, permission ASK or
-deny, retry/backoff, timeout, and tool lifecycle events. It does not use
+deny, timeout, and tool lifecycle events. Non-durable invocations retain the
+existing retry/backoff policy. After a durable journal claim, a raised exception
+or timeout becomes `outcome_unknown` without an automatic retry. It does not use
 LangGraph's prebuilt `ToolNode`, `create_agent`, or `create_react_agent`.
 
 ## RuntimeState
@@ -116,6 +136,11 @@ run, the engine reconciles them under the thread lock:
 3. If they are not a prefix, delete that thread through
    `InMemorySaver.adelete_thread()` and reseed from the complete transcript.
 
+Those reset/reseed rules apply to the memory backend and to manual compaction
+when no unfinished run exists. For an unfinished SQLite run, the checkpoint is
+the orchestration authority: a non-prefix transcript mismatch is a typed
+`checkpoint_conflict`, and recovery does not reset the thread or repeat work.
+
 The comparison does not deduplicate by text, so legitimate repeated user
 messages are preserved. Normal turns use a base config containing only the
 current `thread_id`; they do not reuse an old `checkpoint_id` and therefore do
@@ -139,12 +164,14 @@ provider, tools, permissions, and event bus.
 
 For one-shot sessions and direct runners, `thread_id == run_id` and
 `retain_thread=False`; their checkpoint is deleted at the terminal boundary.
-Chat checkpoints are deleted on explicit or automatic session close. Client
-disconnect and daemon shutdown first cancel and await in-flight runs, then
-delete owned threads. `GraphRuntime.close()` clears only threads held by that
-app instance, so separate `CoreApp` or test instances do not share state even
-when they use the same string ID. Loop-only use and an uninitialized Graph
-runtime make these cleanup hooks no-ops.
+Memory chat checkpoints are deleted on explicit or automatic close, and memory
+runtime shutdown clears its owned threads. A suspended durable chat disconnect
+instead removes ownership and in-memory session state while retaining the
+SQLite checkpoint and capability. SQLite runtime shutdown closes the saver
+connection without deleting recoverable checkpoints; explicit `session.close`
+terminalizes the unfinished run and then deletes that session's checkpoint and
+capability. Loop-only use and an uninitialized Graph runtime make these cleanup
+hooks no-ops.
 
 ## Events and client display
 
@@ -197,9 +224,11 @@ node or state events.
    retries do not add counts. A batch that would exceed the budget is rejected
    before any tool in that batch runs. Synthetic error `tool_result` blocks pair
    every rejected call, and the run ends with `exceeded_tool_call_budget`.
-4. **`wall_time_s`** covers the entire graph run, including model calls, tools,
-   retry/backoff, and permission waits. Timeout cancels in-flight work and ends
-   with `exceeded_wall_time`.
+4. **`wall_time_s`** covers each active attempt, including model calls, tools,
+   and any applicable retry/backoff. An in-process memory permission wait remains
+   inside that attempt; a durable approval wait and daemon downtime occur between
+   attempts and do not consume it. Timeout cancels in-flight work and ends with
+   `exceeded_wall_time`.
 
 The deterministic priority is:
 
@@ -241,6 +270,7 @@ The current project lock for the Graph extra resolves:
 | Package | Version | Relationship to P1 |
 | --- | --- | --- |
 | `langgraph` | `1.2.8` | Direct optional dependency |
+| `langgraph-checkpoint-sqlite` | `3.1.1` | Direct dependency of the `graph-sqlite` extra |
 | `langgraph-checkpoint` | `4.2.0` | Transitive saver API |
 | `langgraph-prebuilt` | `1.1.0` | Transitive only; its ToolNode is not used |
 | `langgraph-sdk` | `0.4.3` | Transitive only |
@@ -260,11 +290,15 @@ uv run --frozen --isolated --extra graph python examples/graph_offline_demo.py
 The demo uses a scripted KitAgent provider and local tools. It is offline
 validation, not a real-provider or production deployment test.
 
-## P1 boundary
+## P1 memory and P2 durable boundaries
 
-P1 provides process-local multi-turn continuation and thread isolation. It does
-not provide a durable SQLite/Postgres/JSONL Graph checkpoint, daemon-restart
-recovery, external run resume, `interrupt`/HITL approval resume, time travel,
-historical branching, exactly-once recovery, a plan/review/report business
-graph, subgraphs, fan-out, or LangChain message/StructuredTool adapters.
-`GraphExecutionEngine.resume()` therefore returns typed `resume_unsupported`.
+The memory backend preserves P1 process-local continuation, thread isolation,
+compact reset/reseed behavior, and typed external `resume_unsupported`.
+
+The opt-in P2 SQLite backend adds daemon-restart continuation, capability-bound
+session attachment, native `interrupt`/HITL approval, tool result journaling,
+and monotonic event cursors. It uses only the latest checkpoint and does not add
+time travel, historical branching, Postgres, concurrent-daemon HA, a general
+exactly-once guarantee, a plan/review/report business graph, durable subagents,
+subgraphs, fan-out, or LangChain message/StructuredTool adapters. See
+[Durable Graph Recovery and Human Approval](durable-recovery.md).
