@@ -61,7 +61,42 @@ class SessionManager:
         self._recovery_store = recovery_store
         self._sessions: dict[str, Session] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._closing: set[str] = set()
+        self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+        self._close_tasks: dict[str, asyncio.Task[None]] = {}
+        self._shutting_down = False
         self._skill_loader = SkillLoader()
+
+    def begin_close(self, sid: str) -> None:
+        """Stop admitting turns before cancellation yields to another request."""
+
+        self._closing.add(sid)
+
+    def begin_shutdown(self) -> None:
+        """Reject both new sessions and new work before transport shutdown."""
+
+        self._shutting_down = True
+        self._closing.update(self._sessions)
+
+    async def _cancel_active(self, sid: str) -> None:
+        current = asyncio.current_task()
+        tasks = [
+            task for task in self._active_tasks.get(sid, set())
+            if task is not current and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _untrack_active(self, sid: str, task: asyncio.Task[Any] | None) -> None:
+        if task is None:
+            return
+        active = self._active_tasks.get(sid)
+        if active is not None:
+            active.discard(task)
+            if not active:
+                self._active_tasks.pop(sid, None)
 
     # 创建新 session；transport 可在发布 session.created 前原子登记 owner
     async def create(
@@ -72,6 +107,8 @@ class SessionManager:
         before_publish: Callable[[Session], None] | None = None,
         durable: bool = False,
     ) -> Session:
+        if self._shutting_down:
+            raise HandlerError(SESSION_CLOSED, "session manager is closing")
         sid = f"sess-{uuid.uuid4().hex[:12]}"
         ts = _now()
         session = Session(
@@ -94,6 +131,25 @@ class SessionManager:
 
     # 处理用户消息，追加 thread 并启动一次 agent run
     async def send_message(self, sid: str, content: str, *, run_id: str | None = None) -> str:
+        session = self._get_session(sid)
+        if self._shutting_down or sid in self._closing:
+            raise HandlerError(SESSION_CLOSED, "session already closed")
+        if self._locks[sid].locked():
+            raise HandlerError(SESSION_BUSY, "session busy")
+        current = asyncio.current_task()
+        if current is not None:
+            self._active_tasks.setdefault(sid, set()).add(current)
+        try:
+            return await self._send_message(sid, content, run_id=run_id)
+        finally:
+            self._untrack_active(sid, current)
+            # The runner has already joined its children, including on early
+            # failure/cancellation. A one-shot cannot leave an open ownership.
+            if session.mode == "one_shot" and session.status != "suspended":
+                if sid not in self._close_tasks:
+                    await self.close(sid)
+
+    async def _send_message(self, sid: str, content: str, *, run_id: str | None = None) -> str:
         from agent_runtime.core.engine.base import RunSuspension
 
         session = self._get_session(sid)
@@ -191,13 +247,10 @@ class SessionManager:
             else:
                 evict = False
                 session.active_run_id = None
-            session_closed = session.mode == "one_shot"
-            if evict:
-                session_closed = False
-            elif session.mode == "one_shot":
+            if not evict and session.mode == "one_shot":
                 session.status = "closed"
                 await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
-            else:
+            elif not evict:
                 session.status = "waiting_for_input"
                 await self._bus.publish(
                     SessionWaitingForInputEvent(
@@ -207,8 +260,6 @@ class SessionManager:
                     )
                 )
             self._store.write_meta(session)
-            if session_closed and self._on_session_closed is not None:
-                await self._on_session_closed(sid)
         if evict:
             self.evict(sid)
         return run_id
@@ -261,6 +312,23 @@ class SessionManager:
         self._locks.pop(sid, None)
 
     async def resume_run(
+        self,
+        sid: str,
+        run: RecoveryRun,
+        *,
+        resume_value: object | None = None,
+    ) -> EngineRunResult:
+        if self._shutting_down or sid in self._closing:
+            raise HandlerError(SESSION_CLOSED, "session already closed")
+        current = asyncio.current_task()
+        if current is not None:
+            self._active_tasks.setdefault(sid, set()).add(current)
+        try:
+            return await self._resume_run(sid, run, resume_value=resume_value)
+        finally:
+            self._untrack_active(sid, current)
+
+    async def _resume_run(
         self,
         sid: str,
         run: RecoveryRun,
@@ -336,10 +404,26 @@ class SessionManager:
 
     # 关闭指定 session 并更新 meta.json
     async def close(self, sid: str) -> None:
+        self._get_session(sid)
+        self.begin_close(sid)
+        task = self._close_tasks.get(sid)
+        if task is None:
+            task = asyncio.create_task(self._close_session(sid))
+            self._close_tasks[sid] = task
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError()
+
+    async def _close_session(self, sid: str) -> None:
+        await self._cancel_active(sid)
         session = self._get_session(sid)
         lock = self._locks[sid]
-        if lock.locked():
-            raise HandlerError(SESSION_BUSY, "session busy")
         async with lock:
             if session.status == "closed":
                 if self._on_session_closed is not None:
@@ -376,13 +460,19 @@ class SessionManager:
             session.status = "closed"
             session.active_run_id = None
             session.updated_at = _now()
-            self._store.write_meta(session)
-            await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
-            if self._on_session_closed is not None:
-                await self._on_session_closed(sid)
+            try:
+                self._store.write_meta(session)
+                await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
+            finally:
+                # This ownership is already closed and its root/children joined;
+                # a storage or subscriber failure must not strand its runtime.
+                if self._on_session_closed is not None:
+                    await self._on_session_closed(sid)
 
     # 连接已失去 ownership 且运行任务已收尾时，持久化 closed 并回收进程内会话
     async def close_disconnected(self, sid: str) -> bool:
+        self.begin_close(sid)
+        await self._cancel_active(sid)
         session = self._sessions.get(sid)
         if session is None:
             try:
@@ -403,12 +493,23 @@ class SessionManager:
                     preserve = False
             else:
                 preserve = False
-            if not preserve and session.status != "closed":
-                session.status = "closed"
-                session.active_run_id = None
-                session.updated_at = _now()
-                self._store.write_meta(session)
-                await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
+            if not preserve:
+                try:
+                    if session.status != "closed":
+                        session.status = "closed"
+                        session.active_run_id = None
+                        session.updated_at = _now()
+                        self._store.write_meta(session)
+                        await self._bus.publish(
+                            SessionClosedEvent(session_id=sid, ts=session.updated_at)
+                        )
+                finally:
+                    if self._on_session_closed is not None:
+                        await self._on_session_closed(sid)
+        if preserve:
+            # A durable suspension is detached, not closed; its lazy facade
+            # remains valid for the explicitly authorized resume path.
+            self._closing.discard(sid)
         self.evict(sid)
         return preserve
 

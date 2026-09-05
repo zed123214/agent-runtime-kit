@@ -15,6 +15,16 @@ class ToolResult:
     error_type: str | None = None
 
 
+@dataclass(frozen=True)
+class ToolInvocationContext:
+    """Trusted invocation identity, separate from model-visible parameters."""
+
+    run_id: str
+    tool_call_id: str
+    attempt: int = 1
+    session_id: str = ""
+
+
 class BaseTool(ABC):
     name: str
     description: str
@@ -24,3 +34,9 @@ class BaseTool(ABC):
     # 执行工具调用，返回结果或错误
     @abstractmethod
     async def invoke(self, params: dict[str, object]) -> ToolResult: ...
+
+    async def invoke_with_context(
+        self, params: dict[str, object], context: ToolInvocationContext
+    ) -> ToolResult:
+        """Internal hook; existing third-party tools only need ``invoke``."""
+        return await self.invoke(params)

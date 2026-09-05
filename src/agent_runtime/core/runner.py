@@ -15,7 +15,7 @@ from agent_runtime.core.bus.events import (
     RunSuspendedEvent,
 )
 from agent_runtime.core.compact.compactor import Compactor
-from agent_runtime.core.config import RuntimeConfig
+from agent_runtime.core.config import RuntimeConfig, validate_sandbox_backend
 from agent_runtime.core.context import ExecutionContext, TerminalStatus
 from agent_runtime.core.engine.base import (
     EngineErrorDetail,
@@ -38,6 +38,7 @@ from agent_runtime.core.mcp.server import McpServerManager
 from agent_runtime.core.memory.loader import load_context_file
 from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
+from agent_runtime.core.sandbox import SandboxKey, SandboxManager, SandboxRuntime
 from agent_runtime.core.session.model import Session
 from agent_runtime.core.session.store import SessionStore, TranscriptConflictError
 from agent_runtime.core.subagent.registry import BackgroundTaskRegistry
@@ -104,7 +105,9 @@ class AgentRunner:
         engine_resolver: EngineResolver | None = None,
         recovery_store: RecoveryStore | None = None,
         extra_tools: list[BaseTool] | None = None,
+        sandbox_manager: SandboxManager | None = None,
     ) -> None:
+        validate_sandbox_backend(config.sandbox.backend)
         self._config = config
         self._bus = bus
         self._provider = provider
@@ -118,6 +121,7 @@ class AgentRunner:
         self._engine_resolver = engine_resolver if engine_resolver is not None else EngineRouter()
         self._recovery_store = recovery_store
         self._extra_tools = list(extra_tools or [])
+        self._sandbox_manager = sandbox_manager if sandbox_manager is not None else SandboxManager()
         # 跨 run 共享的后台 subagent 任务注册表
         self._task_registry = BackgroundTaskRegistry()
 
@@ -134,6 +138,9 @@ class AgentRunner:
         child_runs_dir: Path | None = None,
         session_id: str = "",
         tool_whitelist: list[str] | None = None,
+        sandbox_runtime: SandboxRuntime | None = None,
+        sandbox_key: SandboxKey | None = None,
+        task_registry: BackgroundTaskRegistry | None = None,
     ) -> ToolRegistry:
         allowed: set[str] | None = set(tool_whitelist) if tool_whitelist else None
 
@@ -141,7 +148,12 @@ class AgentRunner:
             return allowed is None or name in allowed
 
         registry = ToolRegistry()
-        for t in [ReadFileTool(), BashTool(), WriteFileTool(), ListDirTool()]:
+        for t in [
+            ReadFileTool(sandbox_runtime, sandbox_key=sandbox_key),
+            BashTool(sandbox_runtime, sandbox_key=sandbox_key),
+            WriteFileTool(sandbox_runtime, sandbox_key=sandbox_key),
+            ListDirTool(sandbox_runtime, sandbox_key=sandbox_key),
+        ]:
             if _ok(t.name):
                 registry.register(t)
         for t in [
@@ -166,14 +178,16 @@ class AgentRunner:
                         parent_run_id=run_id,
                         permission_manager=self._permission_manager,
                         max_steps=self._config.agent.max_steps,
-                        task_registry=self._task_registry,
+                        task_registry=task_registry or self._task_registry,
                         runs_dir=runs_dir,
                         session_id=session_id,
                         depth=0,
+                        sandbox_runtime=sandbox_runtime,
+                        sandbox_key=sandbox_key,
                     )
                 )
             if _ok("agent_result"):
-                registry.register(AgentResultTool(self._task_registry))
+                registry.register(AgentResultTool(task_registry or self._task_registry))
         if self._mcp_manager is not None:
             for mcp_tool in self._mcp_manager.get_tools():
                 if _ok(mcp_tool.name):
@@ -281,6 +295,58 @@ class AgentRunner:
         self,
         goal: str,
         *,
+        run_id: str | None = None,
+        session: Session | None = None,
+        store: SessionStore | None = None,
+        system_prompt_override: str | None = None,
+        tool_whitelist: list[str] | None = None,
+        resume: bool = False,
+        resume_value: object | None = None,
+        expected_checkpoint_revision: str | None = None,
+        resume_epoch: int = 0,
+    ) -> EngineRunResult:
+        run_id = run_id or new_run_id()
+        key = SandboxKey("session", session.id) if session else SandboxKey("direct_run", run_id)
+        # Registry construction is lazy. Even a failed event writer or provider
+        # must leave a direct-run ownership closed without provisioning anything.
+        runtime = self._sandbox_manager.runtime_for(key)
+        task_registry = BackgroundTaskRegistry()
+        try:
+            return await self._run_and_capture(
+                goal,
+                run_id=run_id,
+                session=session,
+                store=store,
+                system_prompt_override=system_prompt_override,
+                tool_whitelist=tool_whitelist,
+                resume=resume,
+                resume_value=resume_value,
+                expected_checkpoint_revision=expected_checkpoint_revision,
+                resume_epoch=resume_epoch,
+                sandbox_runtime=runtime,
+                sandbox_key=key,
+                task_registry=task_registry,
+            )
+        finally:
+            async def cleanup() -> None:
+                try:
+                    await task_registry.cancel_all()
+                finally:
+                    if session is None:
+                        # Never close an injected manager: its other root/session
+                        # resources belong to their own callers.
+                        await self._sandbox_manager.release(key, reason="run_finished")
+
+            if await _finish_despite_cancellation(cleanup()):
+                raise asyncio.CancelledError()
+
+    async def _run_and_capture(
+        self,
+        goal: str,
+        *,
+        sandbox_runtime: SandboxRuntime,
+        sandbox_key: SandboxKey,
+        task_registry: BackgroundTaskRegistry,
         run_id: str | None = None,
         session: Session | None = None,
         store: SessionStore | None = None,
@@ -429,6 +495,9 @@ class AgentRunner:
                     child_runs_dir=child_runs_dir,
                     session_id=session_id_str,
                     tool_whitelist=tool_whitelist,
+                    sandbox_runtime=sandbox_runtime,
+                    sandbox_key=sandbox_key,
+                    task_registry=task_registry,
                 )
                 session_dir = (
                     store.session_dir(session.id)
@@ -581,7 +650,7 @@ class AgentRunner:
                     )
 
                 async def suspend_run() -> RunSuspension:
-                    await self._task_registry.cancel_all()
+                    await task_registry.cancel_all()
                     await bus.publish(
                         RunSuspendedEvent(
                             run_id=run_id,
@@ -638,12 +707,12 @@ class AgentRunner:
                 terminal_status = "failed"
 
             async def finish_run() -> None:
-                # Background subagents are scoped to this Runner. Complete the
+                # Background subagents are scoped to this root run. Complete the
                 # entire terminal boundary in a separate task so repeated
                 # cancellation of the caller cannot strand a child, omit the
                 # root terminal event, leave the writer open, or skip the
                 # session increment.
-                await self._task_registry.cancel_all()
+                await task_registry.cancel_all()
                 if recovery_store is not None:
                     # A durable tool is journaled as ``started`` immediately before
                     # its external invocation.  Once this attempt is terminating,

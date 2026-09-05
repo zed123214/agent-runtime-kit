@@ -125,6 +125,20 @@ AGENTRT_LOG_FORMAT=text
 
 ### 运行
 
+四个命令/文件工具通过 Sandbox Runtime 执行，默认配置无需修改。
+如需显式声明，可在 `.agentrt/config.toml` 中添加：
+
+```toml
+[sandbox]
+backend = "local"
+```
+
+环境变量 `AGENTRT_SANDBOX_BACKEND=local` 可覆盖 TOML。M0 的 Local 沿用宿主
+cwd、绝对路径和文件系统，不提供物理隔离；释放环境不会删除项目或用户文件。
+`kubernetes` 在 M0 会在启动监听前明确报尚未实现，其他未交付的 Sandbox 配置字段也会报错。
+本阶段代码与新增测试用例未测试/未验收，详见
+[M0 实现与使用说明](docs/sandbox-m0-implementation.md)。
+
 ```bash
 uv run agentrt-core
 uv run agentrt ping
