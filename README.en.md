@@ -127,6 +127,14 @@ uv sync
 
 ### Configure
 
+The four shell/file tools execute through Sandbox Runtime. M0 defaults to
+`[sandbox] backend = "local"`; `AGENTRT_SANDBOX_BACKEND=local` overrides TOML.
+Local uses the host cwd and filesystem, accepts existing absolute paths, and
+provides no physical isolation. Release does not delete project or user files.
+The `kubernetes` value fails before startup listening because it is not implemented
+in M0; other undelivered Sandbox fields are rejected. This delivery is implemented
+but untested and unaccepted. See the [M0 implementation notes](docs/sandbox-m0-implementation.md).
+
 ```bash
 cp .env.example .env
 ```

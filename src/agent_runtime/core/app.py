@@ -48,6 +48,7 @@ from agent_runtime.core.config import (
     get_config,
     resolve_data_root,
     resolve_graph_checkpoint_path,
+    validate_sandbox_backend,
 )
 from agent_runtime.core.engine.router import EngineRouter
 from agent_runtime.core.events.bus import EventBus
@@ -67,6 +68,7 @@ from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.permissions.storage import load_policy_file
 from agent_runtime.core.runner import AgentRunner
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
+from agent_runtime.core.sandbox import SandboxKey, SandboxManager
 from agent_runtime.core.session import SessionManager, SessionStore
 from agent_runtime.core.session.manager import SESSION_NOT_FOUND
 from agent_runtime.core.session.store import TranscriptStoreError
@@ -123,6 +125,7 @@ class CoreApp:
         *,
         provider_factory: Callable[[RuntimeConfig], LLMProvider] | None = None,
         extra_tools_factory: Callable[[], list[BaseTool]] | None = None,
+        sandbox_manager: SandboxManager | None = None,
     ) -> None:
         self._start_time = time.monotonic()
         self._bus = EventBus()
@@ -132,9 +135,12 @@ class CoreApp:
         self._running_runs: set[asyncio.Task[Any]] = set()
         self._run_tasks_by_session: dict[str, set[asyncio.Task[Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._session_resource_tasks: dict[str, asyncio.Task[None]] = {}
         self._engine_router = engine_router if engine_router is not None else EngineRouter()
         self._provider_factory = provider_factory
         self._extra_tools_factory = extra_tools_factory or (lambda: [])
+        self._sandbox_manager = sandbox_manager if sandbox_manager is not None else SandboxManager()
+        self._server: SocketServer | None = None
         self._sessions: SessionManager | None = None
         self._permission_manager: PermissionManager | None = None
         self._mcp_manager: McpServerManager | None = None
@@ -209,6 +215,8 @@ class CoreApp:
     async def _cleanup_disconnected_sessions(self, session_ids: frozenset[str]) -> None:
         run_tasks: set[asyncio.Task[Any]] = set()
         for session_id in session_ids:
+            if self._sessions is not None:
+                self._sessions.begin_close(session_id)
             run_tasks.update(self._run_tasks_by_session.pop(session_id, set()))
         for task in run_tasks:
             if not task.done():
@@ -216,19 +224,47 @@ class CoreApp:
         if run_tasks:
             await asyncio.gather(*run_tasks, return_exceptions=True)
             self._running_runs.difference_update(run_tasks)
-        if self._sessions is not None:
-            for session_id in session_ids:
-                preserve = await self._sessions.close_disconnected(session_id)
-                if not preserve:
+        errors: list[Exception] = []
+        for session_id in session_ids:
+            try:
+                if self._sessions is not None:
+                    preserve = await self._sessions.close_disconnected(session_id)
+                    if not preserve:
+                        await self._delete_session_resources(session_id)
+                else:
                     await self._delete_session_resources(session_id)
-        else:
-            for session_id in session_ids:
-                await self._delete_session_resources(session_id)
+            except Exception as exc:
+                # A failed close must not strand another session on this socket.
+                # A durable recovery lookup failure does not authorize release;
+                # each session's close path decides its ownership independently.
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("session disconnect cleanup failed", errors)
 
     async def _delete_session_resources(self, session_id: str) -> None:
-        if self._recovery_store is not None:
-            await self._recovery_store.delete_capability(session_id)
-        await self._engine_router.delete_thread(session_id)
+        task = self._session_resource_tasks.get(session_id)
+        if task is None:
+            task = asyncio.create_task(self._release_session_resources(session_id))
+            self._session_resource_tasks[session_id] = task
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError()
+
+    async def _release_session_resources(self, session_id: str) -> None:
+        try:
+            if self._recovery_store is not None:
+                await self._recovery_store.delete_capability(session_id)
+            await self._engine_router.delete_thread(session_id)
+        finally:
+            await self._sandbox_manager.release(
+                SandboxKey("session", session_id), reason="session_closed"
+            )
 
     async def _cancel_session_run_tasks(self, session_id: str) -> None:
         current = asyncio.current_task()
@@ -943,6 +979,7 @@ class CoreApp:
         assert self._sessions is not None
         cmd = SessionCloseCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
+        self._sessions.begin_close(cmd.session_id)
         await self._cancel_session_run_tasks(cmd.session_id)
         self._sessions.hydrate(cmd.session_id)
         try:
@@ -1165,8 +1202,24 @@ class CoreApp:
 
     # 启动守护进程：加载配置、初始化日志、启动 trace、启动 TCP 服务器，并等待退出信号
     async def run(self) -> None:
+        try:
+            await self._serve()
+        finally:
+            cleanup = asyncio.create_task(self._shutdown())
+            cancelled = False
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    cancelled = True
+            cleanup.result()
+            if cancelled:
+                raise asyncio.CancelledError()
+
+    async def _serve(self) -> None:
         self._start_time = time.monotonic()
         self._config = get_config()
+        validate_sandbox_backend(self._config.sandbox.backend)
         self._data_root = resolve_data_root(self._config)
         self._data_root.mkdir(parents=True, exist_ok=True)
         self._sessions_root = self._data_root / "sessions"
@@ -1233,6 +1286,7 @@ class CoreApp:
                 engine_resolver=self._engine_router,
                 recovery_store=self._recovery_store,
                 extra_tools=self._extra_tools_factory(),
+                sandbox_manager=self._sandbox_manager,
             ),
             bus=self._bus,
             provider_factory=lambda: self._provider_for_compaction(config),
@@ -1246,6 +1300,7 @@ class CoreApp:
             self._broadcaster,
             trace=self._trace,
         )
+        self._server = server
         server.register("core.ping", self._ping_handler)
         server.register("agent.run", self._agent_run_handler)
         server.register("event.subscribe", self._subscribe_handler)
@@ -1277,19 +1332,37 @@ class CoreApp:
 
         await shutdown.wait()
 
+    async def _shutdown(self) -> None:
         logger.info("shutting down")
-        await server.stop()
-        run_tasks = list(self._running_runs)
-        for run_task in run_tasks:
-            run_task.cancel()
-        if run_tasks:
-            await asyncio.gather(*run_tasks, return_exceptions=True)
-        await self._wait_for_cleanup_tasks()
-        await self._engine_router.close()
-        if self._mcp_manager is not None:
-            await self._mcp_manager.stop_all()
-        if self._trace is not None:
-            await self._trace.stop()
+        if self._sessions is not None:
+            self._sessions.begin_shutdown()
+        try:
+            if self._server is not None:
+                await self._server.stop()
+        finally:
+            run_tasks = list(self._running_runs)
+            for run_task in run_tasks:
+                run_task.cancel()
+            if run_tasks:
+                await asyncio.gather(*run_tasks, return_exceptions=True)
+            await self._wait_for_cleanup_tasks()
+            pending_resources = [
+                task for task in self._session_resource_tasks.values() if not task.done()
+            ]
+            if pending_resources:
+                await asyncio.gather(*pending_resources, return_exceptions=True)
+            try:
+                await self._sandbox_manager.close()
+            finally:
+                try:
+                    await self._engine_router.close()
+                finally:
+                    try:
+                        if self._mcp_manager is not None:
+                            await self._mcp_manager.stop_all()
+                    finally:
+                        if self._trace is not None:
+                            await self._trace.stop()
 
 
 # 同步入口：启动 CoreApp 事件循环

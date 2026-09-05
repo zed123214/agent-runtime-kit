@@ -23,7 +23,7 @@ from agent_runtime.core.graph.recovery import (
     hash_tool_input,
 )
 from agent_runtime.core.llm.types import ToolCallBlock
-from agent_runtime.core.tools.base import ToolResult
+from agent_runtime.core.tools.base import ToolInvocationContext, ToolResult
 from agent_runtime.core.tools.errors import RateLimitedError
 from agent_runtime.core.tools.registry import ToolRegistry
 
@@ -297,7 +297,18 @@ async def invoke_tool(
         result: ToolResult | None = None
 
         try:
-            result = await asyncio.wait_for(tool.invoke(dict(tool_call.input)), timeout=timeout)
+            result = await asyncio.wait_for(
+                tool.invoke_with_context(
+                    dict(tool_call.input),
+                    ToolInvocationContext(
+                        run_id=run_id,
+                        tool_call_id=tool_call.id,
+                        attempt=attempt,
+                        session_id=session_id,
+                    ),
+                ),
+                timeout=timeout,
+            )
         except RateLimitedError as exc:
             error_class = "rate_limited"
             error_message = str(exc)

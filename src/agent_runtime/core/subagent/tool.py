@@ -14,6 +14,7 @@ from agent_runtime.core.events.bus import EventBus
 from agent_runtime.core.events.writer import EventWriter
 from agent_runtime.core.loop import AgentLoop
 from agent_runtime.core.runs import new_run_id
+from agent_runtime.core.sandbox import SandboxKey, SandboxRuntime
 from agent_runtime.core.subagent.registry import BackgroundTaskRegistry
 from agent_runtime.core.tools.base import BaseTool, ToolResult
 from agent_runtime.core.tools.builtin.bash import BashTool
@@ -93,6 +94,9 @@ class SpawnAgentTool(BaseTool):
         runs_dir: Path,
         session_id: str,
         depth: int = 0,
+        *,
+        sandbox_runtime: SandboxRuntime | None = None,
+        sandbox_key: SandboxKey | None = None,
     ) -> None:
         self._provider = provider
         self._parent_bus = parent_bus
@@ -103,10 +107,19 @@ class SpawnAgentTool(BaseTool):
         self._runs_dir = runs_dir
         self._session_id = session_id
         self._depth = depth
+        self._sandbox_runtime = sandbox_runtime
+        self._sandbox_key = sandbox_key
 
     # 派生子 agent，前台时阻塞直到完成并返回结果，后台时立即返回 run_id
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         p = SpawnAgentParams.model_validate(params)
+
+        if self._task_registry.is_closing:
+            return ToolResult(
+                content="Subagent owner is closing; cannot spawn further subagents.",
+                is_error=True,
+                error_type="runtime_error",
+            )
 
         if self._depth >= 2:
             return ToolResult(
@@ -254,13 +267,15 @@ class SpawnAgentTool(BaseTool):
                     ts=_now(),
                 )
                 finish_task = asyncio.create_task(bus.publish(finished))
-                try:
-                    await asyncio.shield(finish_task)
-                except asyncio.CancelledError:
-                    # Keep the writer open until the terminal event is durable,
-                    # then preserve cancellation for the background registry.
-                    await finish_task
-                    raise
+                cancelled = False
+                while not finish_task.done():
+                    try:
+                        await asyncio.shield(finish_task)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                finish_task.result()
+                if cancelled:
+                    raise asyncio.CancelledError()
 
     # 构造子 registry；基于角色配置过滤工具，深度允许时注册嵌套 SpawnAgentTool
     def _build_child_registry(
@@ -280,10 +295,10 @@ class SpawnAgentTool(BaseTool):
 
         registry = ToolRegistry()
         _all_tools = [
-            ReadFileTool(),
-            BashTool(),
-            WriteFileTool(),
-            ListDirTool(),
+            ReadFileTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
+            BashTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
+            WriteFileTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
+            ListDirTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
         ]
         for t in _all_tools:
             if _allowed(t.name):
@@ -310,6 +325,8 @@ class SpawnAgentTool(BaseTool):
                 runs_dir=self._runs_dir,
                 session_id=self._session_id,
                 depth=self._depth + 1,
+                sandbox_runtime=self._sandbox_runtime,
+                sandbox_key=self._sandbox_key,
             )
             if _allowed("spawn_agent"):
                 registry.register(nested)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_runtime.core.tools.base import BaseTool, ToolResult
+from agent_runtime.core.sandbox import ExecRequest
+from agent_runtime.core.tools.base import ToolInvocationContext, ToolResult
+from agent_runtime.core.tools.sandbox import SandboxTool, tool_result
 
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB
 _DEFAULT_TIMEOUT = 60
@@ -16,7 +16,7 @@ class BashParams(BaseModel):
     timeout: int = Field(default=_DEFAULT_TIMEOUT, ge=1, le=120)
 
 
-class BashTool(BaseTool):
+class BashTool(SandboxTool):
     params_model = BashParams
     name = "bash"
     description = (
@@ -39,41 +39,16 @@ class BashTool(BaseTool):
         "required": ["command"],
     }
 
-    # 在子进程中执行 shell 命令，合并 stdout/stderr，超时或非零退出码时返回错误
-    async def invoke(self, params: dict[str, object]) -> ToolResult:
+    async def invoke_with_context(
+        self, params: dict[str, object], context: ToolInvocationContext
+    ) -> ToolResult:
         p = BashParams.model_validate(params)
-        command = p.command
-        timeout = p.timeout
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            try:
-                stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except TimeoutError:
-                proc.kill()
-                await proc.communicate()
-                return ToolResult(
-                    content=f"[timeout after {timeout}s]",
-                    is_error=True,
-                    error_type="timeout",
+        return tool_result(
+            await self.runtime.exec(
+                ExecRequest(
+                    context=self._call_context(context),
+                    command=p.command,
+                    timeout_s=p.timeout,
                 )
-        except Exception as exc:
-            return ToolResult(content=str(exc), is_error=True, error_type="runtime_error")
-
-        output = stdout_bytes.decode("utf-8", errors="replace")
-        truncated = len(stdout_bytes) > _MAX_OUTPUT_BYTES
-        if truncated:
-            output = output[:_MAX_OUTPUT_BYTES] + "\n[truncated]"
-
-        returncode = proc.returncode or 0
-        if returncode != 0:
-            return ToolResult(
-                content=f"[exit {returncode}]\n{output}",
-                is_error=True,
-                error_type="runtime_error",
             )
-        return ToolResult(content=output or "[no output]")
+        )

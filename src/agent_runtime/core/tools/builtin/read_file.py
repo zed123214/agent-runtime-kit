@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from pydantic import BaseModel, ConfigDict
 
-from agent_runtime.core.tools.base import BaseTool, ToolResult
+from agent_runtime.core.sandbox import ReadRequest
+from agent_runtime.core.tools.base import ToolInvocationContext, ToolResult
+from agent_runtime.core.tools.sandbox import SandboxTool, tool_result
 
 _MAX_BYTES = 512 * 1024  # 512 KB
 
@@ -14,7 +14,7 @@ class ReadFileParams(BaseModel):
     path: str
 
 
-class ReadFileTool(BaseTool):
+class ReadFileTool(SandboxTool):
     params_model = ReadFileParams
     name = "read_file"
     description = (
@@ -33,18 +33,12 @@ class ReadFileTool(BaseTool):
         "required": ["path"],
     }
 
-    # 读取文件内容；超 512KB 截断；禁止 .. 路径遍历
-    async def invoke(self, params: dict[str, object]) -> ToolResult:
-        path_str = ReadFileParams.model_validate(params).path
-
-        if ".." in Path(path_str).parts:
-            raise PermissionError(f"path traversal not allowed: {path_str}")
-
-        path = Path(path_str)
-        raw = path.read_bytes()  # raises FileNotFoundError if absent
-        truncated = len(raw) > _MAX_BYTES
-        text = raw[:_MAX_BYTES].decode("utf-8", errors="replace")
-        if truncated:
-            text += "\n[truncated]"
-
-        return ToolResult(content=text)
+    async def invoke_with_context(
+        self, params: dict[str, object], context: ToolInvocationContext
+    ) -> ToolResult:
+        p = ReadFileParams.model_validate(params)
+        return tool_result(
+            await self.runtime.read_text(
+                ReadRequest(context=self._call_context(context), path=p.path)
+            )
+        )

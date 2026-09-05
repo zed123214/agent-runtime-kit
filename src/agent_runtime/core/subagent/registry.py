@@ -9,6 +9,11 @@ from agent_runtime.core.context import ExecutionContext
 class BackgroundTaskRegistry:
     def __init__(self) -> None:
         self._tasks: dict[str, tuple[asyncio.Task[None], ExecutionContext]] = {}
+        self._closing = False
+
+    @property
+    def is_closing(self) -> bool:
+        return self._closing
 
     # 注册一个后台任务及其执行上下文
     def register(
@@ -18,6 +23,8 @@ class BackgroundTaskRegistry:
         context: ExecutionContext,
     ) -> None:
         self._tasks[run_id] = (task, context)
+        if self._closing and not task.done():
+            task.cancel()
 
     # 查询后台任务及其上下文；不存在时返回 None
     def get(self, run_id: str) -> tuple[asyncio.Task[None], ExecutionContext] | None:
@@ -29,8 +36,10 @@ class BackgroundTaskRegistry:
 
     # 根 run 结束或取消时终止仍在运行的后台子 Agent，并等待其终态事件落盘
     async def cancel_all(self) -> None:
-        tasks = [task for task, _context in self._tasks.values() if not task.done()]
-        for task in tasks:
-            task.cancel()
-        if tasks:
+        self._closing = True
+        # A child may register a nested child while processing cancellation.
+        # Keep joining until all registrations have reached their terminal path.
+        while tasks := [task for task, _context in self._tasks.values() if not task.done()]:
+            for task in tasks:
+                task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
