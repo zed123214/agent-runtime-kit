@@ -1,0 +1,82 @@
+# Stop the regular Core Deployment first. This Job temporarily is the one Core
+# owner for the same scope; running both concurrently is unsupported.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agentrt-sandbox-e2e
+  namespace: kitagent-core
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentrt-core
+        sandbox.agentrt.dev/scope: "${DEPLOYMENT_SCOPE}"
+    spec:
+      serviceAccountName: agentrt-core
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: validation
+          image: ${VALIDATION_IMAGE}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+          env:
+            - name: AGENTRT_SANDBOX_BACKEND
+              value: kubernetes
+            - name: AGENTRT_DATA_ROOT
+              value: /artifacts/data
+            - name: AGENTRT_SANDBOX_DEPLOYMENT_SCOPE
+              value: "${DEPLOYMENT_SCOPE}"
+            - name: AGENTRT_SANDBOX_KUBERNETES_IMAGE
+              value: ${WORKER_IMAGE}
+            - name: AGENTRT_SANDBOX_KUBERNETES_OWNERSHIP_KEY_FILE
+              value: /run/agentrt/ownership/key
+            - name: AGENTRT_SANDBOX_KUBERNETES_NETWORK_POLICY_VERIFIED
+              value: "${NETWORK_POLICY_VERIFIED}"
+          volumeMounts:
+            - name: environment
+              mountPath: /run/validation
+              readOnly: true
+            - name: artifacts
+              mountPath: /artifacts
+            - name: tmp
+              mountPath: /tmp
+            - name: ownership
+              mountPath: /run/agentrt/ownership
+              readOnly: true
+      volumes:
+        - name: environment
+          configMap:
+            name: agentrt-validation-environment
+        - name: artifacts
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: ownership
+          secret:
+            secretName: agentrt-ownership
+            defaultMode: 0440

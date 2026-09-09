@@ -51,6 +51,7 @@ class SessionManager:
         provider_factory: Callable[[], LLMProvider] | None = None,
         on_session_closed: Callable[[str], Awaitable[None]] | None = None,
         recovery_store: RecoveryStore | None = None,
+        durable_supported: bool = True,
     ) -> None:
         self._store = store
         self._runner_factory = runner_factory
@@ -59,11 +60,13 @@ class SessionManager:
         self._provider_factory = provider_factory
         self._on_session_closed = on_session_closed
         self._recovery_store = recovery_store
+        self._durable_supported = durable_supported
         self._sessions: dict[str, Session] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._closing: set[str] = set()
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._close_tasks: dict[str, asyncio.Task[None]] = {}
+        self._close_pending_events: set[str] = set()
         self._shutting_down = False
         self._skill_loader = SkillLoader()
 
@@ -81,7 +84,8 @@ class SessionManager:
     async def _cancel_active(self, sid: str) -> None:
         current = asyncio.current_task()
         tasks = [
-            task for task in self._active_tasks.get(sid, set())
+            task
+            for task in self._active_tasks.get(sid, set())
             if task is not current and not task.done()
         ]
         for task in tasks:
@@ -107,6 +111,8 @@ class SessionManager:
         before_publish: Callable[[Session], None] | None = None,
         durable: bool = False,
     ) -> Session:
+        if durable and not self._durable_supported:
+            raise HandlerError(SESSION_STATE_ERROR, "Kubernetes durable sessions require M3")
         if self._shutting_down:
             raise HandlerError(SESSION_CLOSED, "session manager is closing")
         sid = f"sess-{uuid.uuid4().hex[:12]}"
@@ -408,7 +414,7 @@ class SessionManager:
         self.begin_close(sid)
         task = self._close_tasks.get(sid)
         if task is None:
-            task = asyncio.create_task(self._close_session(sid))
+            task = asyncio.create_task(self._close_attempt(sid))
             self._close_tasks[sid] = task
         cancelled = False
         while not task.done():
@@ -420,14 +426,26 @@ class SessionManager:
         if cancelled:
             raise asyncio.CancelledError()
 
+    async def _close_attempt(self, sid: str) -> None:
+        try:
+            await self._close_session(sid)
+        except BaseException:
+            # Only a failed, finished attempt is replaceable. Concurrent callers
+            # retain the same task and observe the same failure. A caller being
+            # cancelled cannot cancel this shielded ownership transition.
+            self._close_tasks.pop(sid, None)
+            session = self._sessions.get(sid)
+            if session is not None and session.status != "closed" and not self._shutting_down:
+                self._closing.discard(sid)
+            raise
+
     async def _close_session(self, sid: str) -> None:
         await self._cancel_active(sid)
         session = self._get_session(sid)
         lock = self._locks[sid]
         async with lock:
             if session.status == "closed":
-                if self._on_session_closed is not None:
-                    await self._on_session_closed(sid)
+                await self._persist_and_release_closed(session)
                 return
             if session.durable and self._recovery_store is not None:
                 unfinished = await self._recovery_store.latest_unfinished_run(sid)
@@ -460,17 +478,33 @@ class SessionManager:
             session.status = "closed"
             session.active_run_id = None
             session.updated_at = _now()
-            try:
-                self._store.write_meta(session)
+            self._close_pending_events.add(sid)
+            await self._persist_and_release_closed(session)
+
+    async def _persist_and_release_closed(self, session: Session) -> None:
+        # A failed metadata write or cleanup is retryable, but closed ownership
+        # never reopens. Retry persistence too, so disk cannot retain active state.
+        sid = session.id
+        try:
+            self._store.write_meta(session)
+            if sid in self._close_pending_events:
                 await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
-            finally:
-                # This ownership is already closed and its root/children joined;
-                # a storage or subscriber failure must not strand its runtime.
-                if self._on_session_closed is not None:
-                    await self._on_session_closed(sid)
+                self._close_pending_events.discard(sid)
+        finally:
+            if self._on_session_closed is not None:
+                await self._on_session_closed(sid)
 
     # 连接已失去 ownership 且运行任务已收尾时，持久化 closed 并回收进程内会话
     async def close_disconnected(self, sid: str) -> bool:
+        try:
+            return await self._close_disconnected(sid)
+        except BaseException:
+            session = self._sessions.get(sid)
+            if session is not None and session.status != "closed" and not self._shutting_down:
+                self._closing.discard(sid)
+            raise
+
+    async def _close_disconnected(self, sid: str) -> bool:
         self.begin_close(sid)
         await self._cancel_active(sid)
         session = self._sessions.get(sid)
@@ -494,18 +528,12 @@ class SessionManager:
             else:
                 preserve = False
             if not preserve:
-                try:
-                    if session.status != "closed":
-                        session.status = "closed"
-                        session.active_run_id = None
-                        session.updated_at = _now()
-                        self._store.write_meta(session)
-                        await self._bus.publish(
-                            SessionClosedEvent(session_id=sid, ts=session.updated_at)
-                        )
-                finally:
-                    if self._on_session_closed is not None:
-                        await self._on_session_closed(sid)
+                if session.status != "closed":
+                    session.status = "closed"
+                    session.active_run_id = None
+                    session.updated_at = _now()
+                    self._close_pending_events.add(sid)
+                await self._persist_and_release_closed(session)
         if preserve:
             # A durable suspension is detached, not closed; its lazy facade
             # remains valid for the explicitly authorized resume path.

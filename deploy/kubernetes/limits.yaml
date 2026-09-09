@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-capacity
+  namespace: kitagent-sandboxes
+spec:
+  hard:
+    pods: "20"
+    services: "20"
+    secrets: "24"
+    requests.cpu: "4"
+    limits.cpu: "25"
+    requests.memory: "4Gi"
+    limits.memory: "16Gi"
+    requests.ephemeral-storage: "6Gi"
+    limits.ephemeral-storage: "24Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandbox-limits
+  namespace: kitagent-sandboxes
+spec:
+  limits:
+    - type: Container
+      max:
+        cpu: "2"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      min:
+        cpu: "10m"
+        memory: "32Mi"
+        ephemeral-storage: "1Mi"

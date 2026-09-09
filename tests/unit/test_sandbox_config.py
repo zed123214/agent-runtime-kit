@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime.core.config import RuntimeConfig, get_config, validate_sandbox_backend
+from agent_runtime.core.config import RuntimeConfig, get_config, validate_runtime_sandbox
 
 
 @pytest.fixture
@@ -52,14 +52,14 @@ def test_system_environment_overrides_dotenv_and_toml(
 
 
 @pytest.mark.parametrize("source", ["toml", "environment"])
-def test_kubernetes_is_explicitly_unavailable(
+def test_kubernetes_without_required_fields_fails_fast(
     source: str, config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if source == "toml":
         config_path.write_text('[sandbox]\nbackend = "kubernetes"\n', encoding="utf-8")
     else:
         monkeypatch.setenv("AGENTRT_SANDBOX_BACKEND", "kubernetes")
-    with pytest.raises(SystemExit, match="not implemented in M0"):
+    with pytest.raises(SystemExit, match="requires deployment_scope"):
         get_config()
 
 
@@ -79,7 +79,7 @@ def test_unknown_backend_is_configuration_error(
 @pytest.mark.parametrize("value", ["true", "7", "[]", "{}"])
 def test_backend_requires_string(value: str, config_path: Path) -> None:
     config_path.write_text(f"[sandbox]\nbackend = {value}\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="sandbox.backend must be"):
+    with pytest.raises(SystemExit, match="sandbox.backend.*invalid type"):
         get_config()
 
 
@@ -87,10 +87,7 @@ def test_backend_requires_string(value: str, config_path: Path) -> None:
     "section",
     [
         "sandbox = 'local'",
-        "[sandbox]\nidle_timeout_s = 900",
-        "[sandbox]\ndeployment_scope = 'example'",
         "[sandbox]\nworkspace = '/workspace'",
-        "[sandbox.kubernetes]\nnamespace = 'agentrt'",
     ],
 )
 def test_undelivered_configuration_is_rejected(section: str, config_path: Path) -> None:
@@ -102,5 +99,5 @@ def test_undelivered_configuration_is_rejected(section: str, config_path: Path) 
 def test_programmatic_config_validation_rejects_unsupported_backend() -> None:
     config = RuntimeConfig()
     config.sandbox.backend = "kubernetes"
-    with pytest.raises(SystemExit, match="not implemented in M0"):
-        validate_sandbox_backend(config.sandbox.backend)
+    with pytest.raises(SystemExit, match="requires deployment_scope"):
+        validate_runtime_sandbox(config)

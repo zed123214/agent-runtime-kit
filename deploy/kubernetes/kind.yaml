@@ -1,0 +1,11 @@
+# Optional separate acceptance cluster. Do not replace the user's existing kind
+# cluster to enable this feature. Install a policy-enforcing CNI before workloads.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: agentrt-sandbox-e2e
+networking:
+  disableDefaultCNI: true
+  podSubnet: "10.245.0.0/16"
+  serviceSubnet: "10.112.0.0/16"
+nodes:
+  - role: control-plane

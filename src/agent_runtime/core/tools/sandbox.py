@@ -27,6 +27,10 @@ def tool_result(result: ExecResult | FileResult | ListResult) -> ToolResult:
 class SandboxTool(BaseTool):
     """Bind execution ownership once; keep each invocation's identity local."""
 
+    @property
+    def remote_execution(self) -> bool:
+        return bool(getattr(self.runtime, "remote_execution", False))
+
     def __init__(
         self,
         runtime: SandboxRuntime | None = None,
@@ -50,6 +54,7 @@ class SandboxTool(BaseTool):
             tool_call_id=context.tool_call_id,
             attempt=context.attempt,
             session_id=context.session_id,
+            event_sink=context.event_sink,
         )
 
     async def invoke(self, params: dict[str, object]) -> ToolResult:
@@ -58,9 +63,7 @@ class SandboxTool(BaseTool):
             params,
             ToolInvocationContext(
                 run_id=(
-                    self.sandbox_key.id
-                    if self.sandbox_key.kind == "direct_run"
-                    else uuid4().hex
+                    self.sandbox_key.id if self.sandbox_key.kind == "direct_run" else uuid4().hex
                 ),
                 tool_call_id=uuid4().hex,
                 session_id=self.sandbox_key.id if self.sandbox_key.kind == "session" else "",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -23,6 +24,7 @@ class ToolInvocationContext:
     tool_call_id: str
     attempt: int = 1
     session_id: str = ""
+    event_sink: Callable[[BaseModel], Awaitable[None]] | None = None
 
 
 class BaseTool(ABC):
@@ -30,6 +32,10 @@ class BaseTool(ABC):
     description: str
     input_schema: dict[str, object]
     params_model: ClassVar[type[BaseModel] | None] = None
+
+    @property
+    def remote_execution(self) -> bool:
+        return False
 
     # 执行工具调用，返回结果或错误
     @abstractmethod

@@ -291,7 +291,11 @@ async def invoke_tool(
             f"Tool invocation {tool_call.id!r} has no safely replayable outcome."
         )
 
-    for attempt in range(1, _MAX_RETRIES + 2):
+    # Remote runtime owns independent queue/provision/command/cleanup deadlines.
+    # Its first authorized call cannot fit the historical Local 120s wrapper.
+    # Provisioning retries stay inside the backend, before command dispatch.
+    remote = tool.remote_execution
+    for attempt in range(1, (1 if remote else _MAX_RETRIES + 1) + 1):
         error_class: str | None = None
         error_message: str | None = None
         result: ToolResult | None = None
@@ -305,9 +309,10 @@ async def invoke_tool(
                         tool_call_id=tool_call.id,
                         attempt=attempt,
                         session_id=session_id,
+                        event_sink=bus.publish,
                     ),
                 ),
-                timeout=timeout,
+                timeout=None if remote else timeout,
             )
         except RateLimitedError as exc:
             error_class = "rate_limited"
@@ -330,8 +335,16 @@ async def invoke_tool(
                 before_publish=persist,
             )
         except Exception as exc:
-            error_class = "runtime_error"
-            error_message = str(exc)
+            if remote:
+                from agent_runtime.core.sandbox.models import SandboxError
+
+                error_class = exc.code if isinstance(exc, SandboxError) else "sandbox_error"
+                error_message = (
+                    str(exc) if isinstance(exc, SandboxError) else "Sandbox operation failed"
+                )
+            else:
+                error_class = "runtime_error"
+                error_message = str(exc)
         else:
             ms = elapsed()
             if result.is_error:
@@ -375,7 +388,7 @@ async def invoke_tool(
                 attempt=attempt,
             )
 
-        if error_class in _RETRYABLE and attempt <= _MAX_RETRIES:
+        if not remote and error_class in _RETRYABLE and attempt <= _MAX_RETRIES:
             await bus.publish(
                 ToolCallFailedEvent(
                     run_id=run_id,

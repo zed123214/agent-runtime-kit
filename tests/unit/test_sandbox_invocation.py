@@ -233,7 +233,9 @@ async def test_non_durable_retry_keeps_key_and_call_identity_with_distinct_attem
     try:
         result = await invoke_tool(
             registry,
-            ToolCallBlock(id="same-call", name="bash", input={"command": "unused", "run_id": "fake"}),
+            ToolCallBlock(
+                id="same-call", name="bash", input={"command": "unused", "run_id": "fake"}
+            ),
             bus,
             run_id="child-run",
         )
@@ -297,7 +299,9 @@ async def test_result_persistence_and_event_failures_do_not_repeat_runtime_opera
     store = RecoveryStore(tmp_path / "recovery.sqlite")
     bus = EventBus()
     if failure_site == "journal":
-        monkeypatch.setattr(store, "complete_tool", AsyncMock(side_effect=RuntimeError("sink failed")))
+        monkeypatch.setattr(
+            store, "complete_tool", AsyncMock(side_effect=RuntimeError("sink failed"))
+        )
     else:
 
         async def failing_sink(event: BaseModel) -> None:
@@ -346,7 +350,10 @@ async def test_root_and_children_sharing_a_runtime_keep_independent_run_identity
         assert backend.ensures == 1
         assert {request.context.key for request in runtime.requests} == {key}
         assert {request.context.run_id for request in runtime.requests} == {
-            "root-run", "foreground-child", "background-child", "nested-child"
+            "root-run",
+            "foreground-child",
+            "background-child",
+            "nested-child",
         }
         assert len(runtime.requests) == 4
     finally:

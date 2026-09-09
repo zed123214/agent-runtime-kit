@@ -249,6 +249,29 @@ class SkillInvokedEvent(RunEvent):
     ts: str
 
 
+class SandboxLifecycleEvent(RunEvent):
+    """Only lifecycle transitions with a currently bound run enter the wire bus."""
+
+    type: Literal[
+        "sandbox.creating",
+        "sandbox.ready",
+        "sandbox.failed",
+        "sandbox.terminating",
+        "sandbox.terminated",
+    ]
+    sandbox_id: str
+    backend: Literal["kubernetes"] = "kubernetes"
+    key_kind: Literal["session", "direct_run"]
+    key_id: str
+    namespace: str | None = None
+    pod_uid: str | None = None
+    image_digest: str | None = None
+    policy_version: str
+    resource_profile: str | None = None
+    terminal_reason: str | None = None
+    ts: str
+
+
 # 根据 type 字段决定事件类型的判别联合
 Event = Annotated[
     CoreStartedEvent
@@ -280,6 +303,7 @@ Event = Annotated[
     | PermissionDeniedEvent
     | SubagentStartedEvent
     | SubagentFinishedEvent
-    | SkillInvokedEvent,
+    | SkillInvokedEvent
+    | SandboxLifecycleEvent,
     Discriminator("type"),
 ]

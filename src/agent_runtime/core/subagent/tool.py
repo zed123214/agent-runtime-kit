@@ -300,9 +300,9 @@ class SpawnAgentTool(BaseTool):
             WriteFileTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
             ListDirTool(self._sandbox_runtime, sandbox_key=self._sandbox_key),
         ]
-        for t in _all_tools:
-            if _allowed(t.name):
-                registry.register(t)
+        for sandbox_tool in _all_tools:
+            if _allowed(sandbox_tool.name):
+                registry.register(sandbox_tool)
 
         child_task_manager = TaskManager(self._runs_dir / child_run_id / ".tasks")
         for t in [

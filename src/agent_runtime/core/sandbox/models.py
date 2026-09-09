@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
+
+from pydantic import BaseModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,11 @@ class SandboxHandle:
     namespace: str | None = None
     pod_uid: str | None = None
     endpoint: str | None = None
+    pod_name: str | None = None
+    generation: str | None = None
+    image_digest: str | None = None
+    resource_profile: str | None = None
+    policy_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +60,9 @@ class SandboxCallContext:
     tool_call_id: str
     attempt: int = 1
     session_id: str = ""
+    event_sink: Callable[[BaseModel], Awaitable[None]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,11 +100,14 @@ class ExecResult:
     truncated: bool = False
     output: str = ""
     exit_code: int | None = None
-    terminal_reason: Literal["completed", "timeout", "runtime_error"] = "completed"
+    terminal_reason: str = "completed"
     duration_ms: float = 0.0
     # Local receives one merged pipe; it cannot reconstruct separate stream order.
     stdout: str | None = None
     stderr: str | None = None
+    merged_output: str | None = None
+    signal: int | None = None
+    resource_observations: dict[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,3 +135,31 @@ class ReconcileReport:
 
 class SandboxClosedError(RuntimeError):
     """The owner has released this key, or closed its manager."""
+
+
+class SandboxError(RuntimeError):
+    code = "sandbox_error"
+
+
+class WorkspaceLostError(SandboxError):
+    code = "workspace_lost"
+
+    def __init__(self, message: str, *, terminal_reason: str = "workspace_lost") -> None:
+        super().__init__(message)
+        self.terminal_reason = terminal_reason
+
+
+class SandboxConflictError(SandboxError):
+    code = "sandbox_conflict"
+
+
+class SandboxOutcomeUnknownError(SandboxError):
+    code = "outcome_unknown"
+
+
+class SandboxQueueTimeout(SandboxError):
+    code = "queue_timeout"
+
+
+class SandboxProvisionError(SandboxError):
+    code = "provision_failed"

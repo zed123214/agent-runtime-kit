@@ -105,7 +105,9 @@ class _ReadProvider:
         if count == 0:
             return LlmResponse(
                 stop_reason="tool_use",
-                tool_calls=[ToolCallBlock(id="same-call-id", name="read_file", input={"path": "x"})],
+                tool_calls=[
+                    ToolCallBlock(id="same-call-id", name="read_file", input={"path": "x"})
+                ],
             )
         return LlmResponse(stop_reason="end_turn", text="done")
 
@@ -321,9 +323,7 @@ async def test_one_shot_factory_failure_still_closes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("disconnected", [False, True])
-async def test_session_metadata_failure_still_releases(
-    tmp_path: Path, disconnected: bool
-) -> None:
+async def test_session_metadata_failure_still_releases(tmp_path: Path, disconnected: bool) -> None:
     class _BrokenStore(SessionStore):
         def write_meta(self, session: Session) -> None:
             if session.status == "closed":
@@ -393,18 +393,30 @@ class _SuspendThenFinishEngine:
     name = "graph"
 
     async def run(
-        self, context: ExecutionContext, *, tools: ToolRegistry,
-        events: EventBus, config: EngineRunConfig,
+        self,
+        context: ExecutionContext,
+        *,
+        tools: ToolRegistry,
+        events: EventBus,
+        config: EngineRunConfig,
     ) -> RunSuspension:
         context.status = "running"
         return RunSuspension(
-            run_id=context.run_id, session_id=config.session_id, reason="permission",
-            checkpoint_revision="revision", interrupt_id="permission", event_seq=0,
+            run_id=context.run_id,
+            session_id=config.session_id,
+            reason="permission",
+            checkpoint_revision="revision",
+            interrupt_id="permission",
+            event_seq=0,
         )
 
     async def resume(
-        self, context: ExecutionContext, *, tools: ToolRegistry,
-        events: EventBus, config: EngineRunConfig,
+        self,
+        context: ExecutionContext,
+        *,
+        tools: ToolRegistry,
+        events: EventBus,
+        config: EngineRunConfig,
     ) -> RunOutcome:
         context.result = "resumed"
         context.mark_success()
@@ -416,8 +428,14 @@ async def test_session_suspension_and_resume_keep_local_ownership(tmp_path: Path
     runtime = _Runtime()
     manager = SandboxManager(backend, runtime_factory=lambda _handle: runtime)
     session = Session(
-        id="durable-local", mode="chat", status="active", title="",
-        created_at="now", updated_at="now", run_ids=[], durable=True,
+        id="durable-local",
+        mode="chat",
+        status="active",
+        title="",
+        created_at="now",
+        updated_at="now",
+        run_ids=[],
+        durable=True,
     )
     store = SessionStore(tmp_path)
     store.write_meta(session)
@@ -425,15 +443,24 @@ async def test_session_suspension_and_resume_keep_local_ownership(tmp_path: Path
     tool = ReadFileTool(manager.runtime_for(key), sandbox_key=key)
     await tool.invoke({"path": "before"})
     runner = AgentRunner(
-        RuntimeConfig(), provider=_ReadProvider(), sandbox_manager=manager,
+        RuntimeConfig(),
+        provider=_ReadProvider(),
+        sandbox_manager=manager,
         engine_resolver=lambda _name: lambda *_args, **_kwargs: _SuspendThenFinishEngine(),
     )
-    suspended = await runner.run_and_capture("goal", run_id="durable-run", session=session, store=store)
+    suspended = await runner.run_and_capture(
+        "goal", run_id="durable-run", session=session, store=store
+    )
     assert isinstance(suspended, RunSuspension)
     assert backend.destroyed == []
     resumed = await runner.run_and_capture(
-        "goal", run_id="durable-run", session=session, store=store, resume=True,
-        expected_checkpoint_revision="revision", resume_epoch=1,
+        "goal",
+        run_id="durable-run",
+        session=session,
+        store=store,
+        resume=True,
+        expected_checkpoint_revision="revision",
+        resume_epoch=1,
     )
     assert isinstance(resumed, RunOutcome) and resumed.status == "success"
     assert not (await tool.invoke({"path": "after"})).is_error
@@ -510,7 +537,7 @@ async def test_shutdown_joins_pending_session_resource_cleanup() -> None:
 def test_runner_rejects_programmatic_kubernetes_config() -> None:
     config = RuntimeConfig()
     config.sandbox.backend = "kubernetes"
-    with pytest.raises(SystemExit, match="not implemented"):
+    with pytest.raises(SystemExit, match="requires deployment_scope"):
         AgentRunner(config)
 
 
@@ -525,5 +552,5 @@ async def test_core_rejects_programmatic_kubernetes_before_listener(
         raise AssertionError("listener constructed before sandbox validation")
 
     monkeypatch.setattr(app_module, "SocketServer", forbidden_listener)
-    with pytest.raises(SystemExit, match="not implemented"):
+    with pytest.raises(SystemExit, match="requires deployment_scope"):
         await CoreApp().run()

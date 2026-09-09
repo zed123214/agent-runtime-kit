@@ -17,6 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+kubernetes = [
+    "kubernetes-asyncio>=33.3,<37",
+    "aiohttp>=3.14.0,<4",
+]
+sandbox-worker = [
+    "aiohttp>=3.14.0,<4",
+]
 graph = [
     "langgraph==1.2.8",
 ]
@@ -29,6 +36,7 @@ graph-sqlite = [
 agentrt = "agent_runtime.cli.main:main"
 agentrt-core = "agent_runtime.core.app:run"
 agentrt-tui = "agent_runtime.tui.__main__:main"
+agentrt-sandbox = "agent_runtime.sandbox_server.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_runtime"]
@@ -64,6 +72,7 @@ explicit_package_bases = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
+    "kubernetes: requires an explicitly configured live Kubernetes cluster",
     "graph: marks offline tests that require the optional graph extra",
     "recovery: marks offline tests that require the optional graph-sqlite extra",
     "integration: marks tests that call the real Anthropic API (require ANTHROPIC_API_KEY)",

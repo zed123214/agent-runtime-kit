@@ -133,11 +133,16 @@ AGENTRT_LOG_FORMAT=text
 backend = "local"
 ```
 
-环境变量 `AGENTRT_SANDBOX_BACKEND=local` 可覆盖 TOML。M0 的 Local 沿用宿主
+环境变量 `AGENTRT_SANDBOX_BACKEND=local` 可覆盖 TOML。Local 沿用宿主
 cwd、绝对路径和文件系统，不提供物理隔离；释放环境不会删除项目或用户文件。
-`kubernetes` 在 M0 会在启动监听前明确报尚未实现，其他未交付的 Sandbox 配置字段也会报错。
-本阶段代码与新增测试用例未测试/未验收，详见
-[M0 实现与使用说明](docs/sandbox-m0-implementation.md)。
+M1 增加可选 Kubernetes Backend：单副本 Core 在集群内按 Session 管理 Pod/ClusterIP
+Service，Worker 提供命令和文本文件 API。需要固定镜像 digest、稳定部署 scope、
+Core 专属 ownership key 和已经验收的 NetworkPolicy CNI；缺依赖/配置会在监听前拒绝。
+Kubernetes durable/自动 durable chat 留待 M3，Local recovery 继续可用。
+M1 真实集群功能验收已通过，M2 的执行回执、测试记录与复现脚本见
+[M2 验收报告](docs/sandbox-m2-validation.md)。使用方法见
+[Kubernetes Sandbox 配置与部署](docs/kubernetes-sandbox.md)，范围见
+[M1 实现记录](docs/sandbox-m1-implementation.md)；[M0 说明](docs/sandbox-m0-implementation.md)保留历史状态。
 
 ```bash
 uv run agentrt-core

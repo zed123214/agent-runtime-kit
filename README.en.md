@@ -127,13 +127,19 @@ uv sync
 
 ### Configure
 
-The four shell/file tools execute through Sandbox Runtime. M0 defaults to
+The four shell/file tools execute through Sandbox Runtime. The default remains
 `[sandbox] backend = "local"`; `AGENTRT_SANDBOX_BACKEND=local` overrides TOML.
 Local uses the host cwd and filesystem, accepts existing absolute paths, and
 provides no physical isolation. Release does not delete project or user files.
-The `kubernetes` value fails before startup listening because it is not implemented
-in M0; other undelivered Sandbox fields are rejected. This delivery is implemented
-but untested and unaccepted. See the [M0 implementation notes](docs/sandbox-m0-implementation.md).
+M1 adds an optional Kubernetes backend with one Session Pod, a ClusterIP Service,
+and an authenticated command/text-file Worker. It requires one in-cluster Core,
+digest-pinned images, a stable deployment scope and ownership key, and a validated
+NetworkPolicy CNI. Missing dependencies/configuration fail before listening.
+Kubernetes durable sessions (including automatic durable chat) require M3;
+Local recovery remains available. M1 cluster E2E has passed; M2 receipts, measured
+results, and reproduction scripts are in the [validation report](docs/sandbox-m2-validation.md).
+See [deployment/configuration](docs/kubernetes-sandbox.md)
+and the [M1 delivery record](docs/sandbox-m1-implementation.md).
 
 ```bash
 cp .env.example .env
