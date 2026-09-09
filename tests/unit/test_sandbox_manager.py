@@ -107,9 +107,7 @@ class RecordingBackend:
 
 
 def context(key: SandboxKey, call: str = "call", run: str = "root") -> SandboxCallContext:
-    return SandboxCallContext(
-        key, run, call, session_id=key.id if key.kind == "session" else ""
-    )
+    return SandboxCallContext(key, run, call, session_id=key.id if key.kind == "session" else "")
 
 
 async def test_facade_is_lazy_and_absent_release_never_creates() -> None:

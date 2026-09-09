@@ -8,6 +8,13 @@ from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 
+from agent_runtime.core.sandbox.config import (
+    SandboxConfig,
+    apply_sandbox_env,
+    apply_sandbox_table,
+    validate_sandbox_config,
+)
+
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 7437
 _DEFAULT_LOG_LEVEL = "INFO"
@@ -90,12 +97,6 @@ class McpConfig:
 
 
 @dataclass
-class SandboxConfig:
-    # Kubernetes is recognized for an explicit capability error, not a fallback.
-    backend: SandboxBackendName = "local"
-
-
-@dataclass
 class RuntimeConfig:
     host: str = _DEFAULT_HOST
     port: int = _DEFAULT_PORT
@@ -138,7 +139,7 @@ def get_config() -> RuntimeConfig:
             _apply_toml(config, data)
 
     _apply_env(config)
-    validate_sandbox_backend(config.sandbox.backend)
+    validate_runtime_sandbox(config)
     data_root = Path(config.data_root).expanduser()
     # A custom data root defines an isolated daemon instance.  Keep explicitly
     # configured observability paths intact, but scope the built-in defaults to
@@ -157,14 +158,18 @@ def _parse_sandbox_backend(value: object, source: str) -> SandboxBackendName:
 
 
 def validate_sandbox_backend(value: str) -> None:
-    """Reject unsupported backends before opening listeners or running tools."""
+    """Validate the name; full startup validation uses validate_runtime_sandbox."""
+    _parse_sandbox_backend(value, "sandbox.backend")
 
-    backend = _parse_sandbox_backend(value, "sandbox.backend")
-    if backend == "kubernetes":
+
+def validate_runtime_sandbox(config: RuntimeConfig, *, durable: bool = False) -> None:
+    if config.sandbox.backend == "kubernetes" and (
+        durable or (config.agent.engine == "graph" and config.graph.checkpoint_backend == "sqlite")
+    ):
         raise SystemExit(
-            "Config error: sandbox.backend='kubernetes' is not implemented in M0 "
-            "(本阶段尚未实现); use 'local'"
+            "Config error: Kubernetes durable sessions / automatic durable chat require M3"
         )
+    validate_sandbox_config(config.sandbox)
 
 
 def resolve_data_root(config: RuntimeConfig) -> Path:
@@ -218,14 +223,7 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
         raise SystemExit(f"Unknown top-level config keys: {', '.join(sorted(unknown))}")
 
     if "sandbox" in data:
-        sandbox = data["sandbox"]
-        if not isinstance(sandbox, dict):
-            raise SystemExit("Config error: [sandbox] must be a table")
-        unknown_sandbox: set[str] = set(sandbox.keys()) - {"backend"}
-        if unknown_sandbox:
-            raise SystemExit(f"Unknown [sandbox] keys: {', '.join(sorted(unknown_sandbox))}")
-        if "backend" in sandbox:
-            config.sandbox.backend = _parse_sandbox_backend(sandbox["backend"], "sandbox.backend")
+        apply_sandbox_table(config.sandbox, data["sandbox"])
 
     if "core" in data:
         core = data["core"]
@@ -462,9 +460,7 @@ def _apply_toml(config: RuntimeConfig, data: dict[str, Any]) -> None:
 
 # 用 AGENTRT_* 环境变量覆盖 config 中对应字段（若变量已设置）
 def _apply_env(config: RuntimeConfig) -> None:
-    sandbox_backend = os.environ.get("AGENTRT_SANDBOX_BACKEND")
-    if sandbox_backend is not None:
-        config.sandbox.backend = _parse_sandbox_backend(sandbox_backend, "AGENTRT_SANDBOX_BACKEND")
+    apply_sandbox_env(config.sandbox)
 
     host = os.environ.get("AGENTRT_HOST")
     if host is not None:

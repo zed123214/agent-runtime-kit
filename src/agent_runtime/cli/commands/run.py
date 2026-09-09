@@ -134,6 +134,12 @@ class StdoutPrinter:
             print(event.get("token", ""), end="", flush=True)
             self._inline = True
 
+        elif isinstance(t, str) and t.startswith("sandbox."):
+            self._ensure_newline()
+            state = _safe_code(t.removeprefix("sandbox.")) or "updated"
+            reason = _safe_code(event.get("terminal_reason"))
+            print(f"[sandbox] {state}" + (f" ({reason})" if reason else ""))
+
         elif t == "tool.call_started":
             self._ensure_newline()
             params_str = json.dumps(event.get("params", {}), ensure_ascii=False)
@@ -155,7 +161,7 @@ class StdoutPrinter:
         elif t == "run.finished":
             self._ensure_newline()
             elapsed = time.monotonic() - self._run_start
-            reason = event.get("reason")
+            reason = str(event.get("reason") or "")
             reason_text = f"  reason={reason}" if reason else ""
             print(
                 f"[run] {event.get('status', '')}  {event.get('steps')} steps  "
@@ -203,6 +209,7 @@ async def _run_async(goal: str, config: RuntimeConfig) -> int:
                     "state.diff",
                     "step.*",
                     "tool.*",
+                    "sandbox.*",
                     "llm.token",
                     "llm.usage",
                 ],

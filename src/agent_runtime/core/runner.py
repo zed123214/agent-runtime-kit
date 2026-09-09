@@ -15,7 +15,7 @@ from agent_runtime.core.bus.events import (
     RunSuspendedEvent,
 )
 from agent_runtime.core.compact.compactor import Compactor
-from agent_runtime.core.config import RuntimeConfig, validate_sandbox_backend
+from agent_runtime.core.config import RuntimeConfig, resolve_data_root, validate_runtime_sandbox
 from agent_runtime.core.context import ExecutionContext, TerminalStatus
 from agent_runtime.core.engine.base import (
     EngineErrorDetail,
@@ -39,6 +39,8 @@ from agent_runtime.core.memory.loader import load_context_file
 from agent_runtime.core.permissions.manager import PermissionManager
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
 from agent_runtime.core.sandbox import SandboxKey, SandboxManager, SandboxRuntime
+from agent_runtime.core.sandbox.factory import create_sandbox_manager
+from agent_runtime.core.sandbox.models import SandboxError
 from agent_runtime.core.session.model import Session
 from agent_runtime.core.session.store import SessionStore, TranscriptConflictError
 from agent_runtime.core.subagent.registry import BackgroundTaskRegistry
@@ -107,7 +109,7 @@ class AgentRunner:
         extra_tools: list[BaseTool] | None = None,
         sandbox_manager: SandboxManager | None = None,
     ) -> None:
-        validate_sandbox_backend(config.sandbox.backend)
+        validate_runtime_sandbox(config, durable=recovery_store is not None)
         self._config = config
         self._bus = bus
         self._provider = provider
@@ -121,7 +123,12 @@ class AgentRunner:
         self._engine_resolver = engine_resolver if engine_resolver is not None else EngineRouter()
         self._recovery_store = recovery_store
         self._extra_tools = list(extra_tools or [])
-        self._sandbox_manager = sandbox_manager if sandbox_manager is not None else SandboxManager()
+        self._sandbox_manager = (
+            sandbox_manager
+            if sandbox_manager is not None
+            else create_sandbox_manager(config.sandbox, resolve_data_root(config))
+        )
+        self._owns_sandbox_manager = sandbox_manager is None
         # 跨 run 共享的后台 subagent 任务注册表
         self._task_registry = BackgroundTaskRegistry()
 
@@ -148,14 +155,14 @@ class AgentRunner:
             return allowed is None or name in allowed
 
         registry = ToolRegistry()
-        for t in [
+        for sandbox_tool in [
             ReadFileTool(sandbox_runtime, sandbox_key=sandbox_key),
             BashTool(sandbox_runtime, sandbox_key=sandbox_key),
             WriteFileTool(sandbox_runtime, sandbox_key=sandbox_key),
             ListDirTool(sandbox_runtime, sandbox_key=sandbox_key),
         ]:
-            if _ok(t.name):
-                registry.register(t)
+            if _ok(sandbox_tool.name):
+                registry.register(sandbox_tool)
         for t in [
             TaskCreateTool(task_manager),
             TaskUpdateTool(task_manager),
@@ -306,10 +313,8 @@ class AgentRunner:
         resume_epoch: int = 0,
     ) -> EngineRunResult:
         run_id = run_id or new_run_id()
+        validate_runtime_sandbox(self._config, durable=session is not None and session.durable)
         key = SandboxKey("session", session.id) if session else SandboxKey("direct_run", run_id)
-        # Registry construction is lazy. Even a failed event writer or provider
-        # must leave a direct-run ownership closed without provisioning anything.
-        runtime = self._sandbox_manager.runtime_for(key)
         task_registry = BackgroundTaskRegistry()
         try:
             return await self._run_and_capture(
@@ -323,11 +328,11 @@ class AgentRunner:
                 resume_value=resume_value,
                 expected_checkpoint_revision=expected_checkpoint_revision,
                 resume_epoch=resume_epoch,
-                sandbox_runtime=runtime,
                 sandbox_key=key,
                 task_registry=task_registry,
             )
         finally:
+
             async def cleanup() -> None:
                 try:
                     await task_registry.cancel_all()
@@ -336,6 +341,8 @@ class AgentRunner:
                         # Never close an injected manager: its other root/session
                         # resources belong to their own callers.
                         await self._sandbox_manager.release(key, reason="run_finished")
+                        if self._owns_sandbox_manager:
+                            await self._sandbox_manager.stop_if_idle()
 
             if await _finish_despite_cancellation(cleanup()):
                 raise asyncio.CancelledError()
@@ -344,7 +351,6 @@ class AgentRunner:
         self,
         goal: str,
         *,
-        sandbox_runtime: SandboxRuntime,
         sandbox_key: SandboxKey,
         task_registry: BackgroundTaskRegistry,
         run_id: str | None = None,
@@ -455,6 +461,10 @@ class AgentRunner:
             engine_name: str = self._config.agent.engine
             engine_invocation_started = False
             try:
+                # Resolve the lazy facade inside the recorded Run boundary. A
+                # TTL tombstone must produce a typed terminal event, not escape
+                # as an IPC internal error with active Session metadata left over.
+                sandbox_runtime = self._sandbox_manager.runtime_for(sandbox_key)
                 if (
                     self._config.agent.engine == "graph"
                     and self._config.compaction.auto_threshold > 0
@@ -591,6 +601,16 @@ class AgentRunner:
                 engine_suspension = None
                 engine_error = None
                 context.mark_failed("cancelled")
+            except SandboxError as exc:
+                engine_outcome = None
+                engine_suspension = None
+                engine_error = EngineErrorDetail(
+                    code=exc.code,
+                    engine=engine_name,
+                    message=str(exc),
+                    operation="sandbox",
+                )
+                context.mark_failed(exc.code)
             except ExecutionEngineError as exc:
                 engine_outcome = None
                 engine_suspension = None

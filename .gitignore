@@ -16,3 +16,4 @@ build/
 .DS_Store
 *.log
 workspace/
+artifacts/sandbox-validation/

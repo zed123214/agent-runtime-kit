@@ -4396,6 +4396,205 @@ Events written to `runs/<run_id>/events.jsonl` and forwarded over IPC to subscri
 }
 ```
 
+## Sandbox Lifecycle Events
+
+Kubernetes M1 adds `sandbox.creating`, `sandbox.ready`, `sandbox.failed`, `sandbox.terminating`, and `sandbox.terminated`. Each wire event belongs to its actual triggering run; child events retain the child run ID and sequence. Unscoped TTL, close, and orphan cleanup records go to `sandboxes/lifecycle.jsonl` and daemon trace, never an old run JSONL. Clients may subscribe to `sandbox.*`; older clients may ignore these additive event types. Remote tool failures can report `outcome_unknown`, `workspace_lost`, `command_failed`, `queue_timeout`, `provision_failed`, `idempotency_conflict`, or `idempotency_capacity`; they do not authorize automatic command replay.
+
+### SandboxLifecycleEvent
+
+| Field | Type | Required |
+|---|---|---|
+| `run_id` | `string` | yes |
+| `correlation_id` | `string | null` | no |
+| `session_id` | `string | null` | no |
+| `node_id` | `string | null` | no |
+| `event_seq` | `integer | null` | no |
+| `type` | `string` | yes |
+| `sandbox_id` | `string` | yes |
+| `backend` | `string` | no |
+| `key_kind` | `string` | yes |
+| `key_id` | `string` | yes |
+| `namespace` | `string | null` | no |
+| `pod_uid` | `string | null` | no |
+| `image_digest` | `string | null` | no |
+| `policy_version` | `string` | yes |
+| `resource_profile` | `string | null` | no |
+| `terminal_reason` | `string | null` | no |
+| `ts` | `string` | yes |
+
+```json
+{
+  "description": "Only lifecycle transitions with a currently bound run enter the wire bus.",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    },
+    "event_seq": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Seq"
+    },
+    "type": {
+      "enum": [
+        "sandbox.creating",
+        "sandbox.ready",
+        "sandbox.failed",
+        "sandbox.terminating",
+        "sandbox.terminated"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "title": "Sandbox Id",
+      "type": "string"
+    },
+    "backend": {
+      "const": "kubernetes",
+      "default": "kubernetes",
+      "title": "Backend",
+      "type": "string"
+    },
+    "key_kind": {
+      "enum": [
+        "session",
+        "direct_run"
+      ],
+      "title": "Key Kind",
+      "type": "string"
+    },
+    "key_id": {
+      "title": "Key Id",
+      "type": "string"
+    },
+    "namespace": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Namespace"
+    },
+    "pod_uid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pod Uid"
+    },
+    "image_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image Digest"
+    },
+    "policy_version": {
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "resource_profile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resource Profile"
+    },
+    "terminal_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal Reason"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "type",
+    "sandbox_id",
+    "key_kind",
+    "key_id",
+    "policy_version",
+    "ts"
+  ],
+  "title": "SandboxLifecycleEvent",
+  "type": "object"
+}
+```
+
 ## Error Codes
 
 | Code | Name | Meaning |

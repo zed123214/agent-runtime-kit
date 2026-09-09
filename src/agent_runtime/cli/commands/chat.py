@@ -47,6 +47,11 @@ class ChatPrinter:
             self._ensure_newline()
             node_id = _safe_code(event.get("node_id")) or "unknown"
             print(f"[state {node_id}] {_state_diff_summary(event.get('diff'))}")
+        elif isinstance(t, str) and t.startswith("sandbox."):
+            self._ensure_newline()
+            state = _safe_code(t.removeprefix("sandbox.")) or "updated"
+            reason = _safe_code(event.get("terminal_reason"))
+            print(f"[sandbox] {state}" + (f" ({reason})" if reason else ""))
         elif t == "tool.call_started":
             self._ensure_newline()
             print(f"[tool] {event.get('tool_name', '')}")
@@ -103,6 +108,7 @@ async def _chat_async(config: RuntimeConfig) -> int:
                     "node.*",
                     "state.diff",
                     "tool.*",
+                    "sandbox.*",
                     "llm.token",
                     "permission.*",
                 ],

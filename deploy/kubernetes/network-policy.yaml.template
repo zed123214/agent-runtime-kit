@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-default-deny
+  namespace: kitagent-sandboxes
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-core
+  namespace: kitagent-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      sandbox.agentrt.dev/owner: agent-runtime-kit
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kitagent-core
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentrt-core
+              sandbox.agentrt.dev/scope: "${DEPLOYMENT_SCOPE}"
+      ports:
+        - protocol: TCP
+          port: 8080

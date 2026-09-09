@@ -96,7 +96,9 @@ class FourToolsProvider:
             stop_reason="tool_use",
             tool_calls=[
                 ToolCallBlock(
-                    id="write", name="write_file", input={"path": "example.txt", "content": "example"}
+                    id="write",
+                    name="write_file",
+                    input={"path": "example.txt", "content": "example"},
                 ),
                 ToolCallBlock(id="exec", name="bash", input={"command": "printf sandbox"}),
                 ToolCallBlock(id="read", name="read_file", input={"path": "example.txt"}),
@@ -140,10 +142,16 @@ async def test_real_engine_uses_injected_runtime_and_keeps_tool_event_order(
         assert backend.ensured == [key]
         assert backend.destroyed == [key]
         assert [name for name, _ in runtime.calls] == [
-            "write_file", "bash", "read_file", "list_dir"
+            "write_file",
+            "bash",
+            "read_file",
+            "list_dir",
         ]
         assert [context.tool_call_id for _, context in runtime.calls] == [
-            "write", "exec", "read", "list"
+            "write",
+            "exec",
+            "read",
+            "list",
         ]
         assert all(
             context.key == key
@@ -155,11 +163,15 @@ async def test_real_engine_uses_injected_runtime_and_keeps_tool_event_order(
         for call_id in ("write", "exec", "read", "list"):
             tool_events = [event for event in events if event.get("tool_use_id") == call_id]
             assert [event["type"] for event in tool_events] == [
-                "tool.call_started", "tool.call_finished"
+                "tool.call_started",
+                "tool.call_finished",
             ]
             params = tool_events[0]["params"]
             assert isinstance(params, dict)
-            assert not {"run_id", "session_id", "tool_call_id", "attempt", "sandbox_key"} & params.keys()
+            assert (
+                not {"run_id", "session_id", "tool_call_id", "attempt", "sandbox_key"}
+                & params.keys()
+            )
         terminal = [event for event in events if event.get("type") == "run.finished"]
         assert len(terminal) == 1
         assert terminal[0]["status"] == "success"

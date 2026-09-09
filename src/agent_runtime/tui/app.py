@@ -882,6 +882,7 @@ class AgentTuiApp(App[None]):
                         "state.diff",
                         "step.*",
                         "tool.*",
+                        "sandbox.*",
                         "llm.token",
                         "llm.usage",
                         "log.*",
@@ -974,6 +975,11 @@ class AgentTuiApp(App[None]):
                     classes="run-header",
                 )
             )
+
+        elif isinstance(t, str) and t.startswith("sandbox."):
+            state = escape(_safe_event_code(t.removeprefix("sandbox.")) or "updated")
+            reason = escape(_safe_event_code(event.get("terminal_reason")) or "")
+            self._append(Static(f"[dim]sandbox[/dim]  {state}  {reason}", classes="log-line"))
 
         elif t == "skill.invoked":
             skill_name = event.get("skill_name", "")

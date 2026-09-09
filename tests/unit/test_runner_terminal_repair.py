@@ -15,6 +15,7 @@ from agent_runtime.core.llm.types import LlmResponse
 from agent_runtime.core.runner import AgentRunner
 from agent_runtime.core.session.model import Session
 from agent_runtime.core.session.store import SessionStore
+from agent_runtime.core.tools.registry import ToolRegistry
 
 
 class _BlockingProvider:
@@ -77,6 +78,7 @@ def _event_rows(store: SessionStore, session: Session, run_id: str) -> list[dict
 async def test_repeated_cancel_finishes_children_root_event_writer_and_session_increment(
     tmp_path: Path,
     engine: Literal["loop", "graph"],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = RuntimeConfig()
     config.agent.engine = engine
@@ -106,15 +108,19 @@ async def test_repeated_cancel_finishes_children_root_event_writer_and_session_i
             raise
 
     child_task = asyncio.create_task(delayed_background_child())
-    runner._task_registry.register(
-        "child-terminal-repair",
-        child_task,
-        ExecutionContext(
-            run_id="child-terminal-repair",
-            goal="child",
-            max_steps=1,
-        ),
+    child_context = ExecutionContext(
+        run_id="child-terminal-repair",
+        goal="child",
+        max_steps=1,
     )
+    build_registry = runner._build_registry
+
+    def registry_with_child(*args: Any, **kwargs: Any) -> ToolRegistry:
+        registry = build_registry(*args, **kwargs)
+        kwargs["task_registry"].register("child-terminal-repair", child_task, child_context)
+        return registry
+
+    monkeypatch.setattr(runner, "_build_registry", registry_with_child)
     await asyncio.wait_for(child_started.wait(), timeout=1.0)
 
     run_id = f"run-terminal-repair-{engine}"
@@ -154,6 +160,8 @@ async def test_repeated_cancel_finishes_children_root_event_writer_and_session_i
         release_child_cleanup.set()
         if not root_task.done():
             root_task.cancel()
+        if not child_task.done():
+            child_task.cancel()
         await asyncio.gather(root_task, child_task, return_exceptions=True)
 
     assert root_cancelled

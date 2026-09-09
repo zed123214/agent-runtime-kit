@@ -5,7 +5,7 @@ import builtins
 import logging
 import sys
 from pathlib import Path
-from typing import get_type_hints
+from typing import Any, get_type_hints
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -639,7 +639,10 @@ async def test_graph_auto_compaction_fails_before_resolver_or_provider(
     assert outcome.error.engine == "graph"
 
 
-async def test_runner_does_not_leave_background_subagent_tasks_alive(tmp_path: Path) -> None:
+async def test_runner_does_not_leave_background_subagent_tasks_alive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runner = AgentRunner(
         RuntimeConfig(),
         provider=_SequenceProvider([LlmResponse(stop_reason="end_turn", text="done")]),
@@ -653,16 +656,28 @@ async def test_runner_does_not_leave_background_subagent_tasks_alive(tmp_path: P
 
     child_task = asyncio.create_task(background_child())
     child_context = _context(run_id="background-child")
-    runner._task_registry.register("background-child", child_task, child_context)
+    build_registry = runner._build_registry
+
+    def registry_with_child(*args: Any, **kwargs: Any) -> ToolRegistry:
+        registry = build_registry(*args, **kwargs)
+        # M0 scopes children to the actual Run, not the Runner's fallback registry.
+        kwargs["task_registry"].register("background-child", child_task, child_context)
+        return registry
+
+    monkeypatch.setattr(runner, "_build_registry", registry_with_child)
     await asyncio.wait_for(child_started.wait(), timeout=1.0)
 
-    outcome = await asyncio.wait_for(
-        runner.run_and_capture("goal", run_id="run-cleans-background"),
-        timeout=2.0,
-    )
-
-    assert outcome.status == "success"
-    assert child_task.cancelled()
+    try:
+        outcome = await asyncio.wait_for(
+            runner.run_and_capture("goal", run_id="run-cleans-background"),
+            timeout=2.0,
+        )
+        assert outcome.status == "success"
+        assert child_task.cancelled()
+    finally:
+        if not child_task.done():
+            child_task.cancel()
+        await asyncio.gather(child_task, return_exceptions=True)
 
 
 async def test_runner_rejects_engine_outcome_context_mismatch(

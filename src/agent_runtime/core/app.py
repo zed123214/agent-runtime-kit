@@ -48,7 +48,7 @@ from agent_runtime.core.config import (
     get_config,
     resolve_data_root,
     resolve_graph_checkpoint_path,
-    validate_sandbox_backend,
+    validate_runtime_sandbox,
 )
 from agent_runtime.core.engine.router import EngineRouter
 from agent_runtime.core.events.bus import EventBus
@@ -69,6 +69,7 @@ from agent_runtime.core.permissions.storage import load_policy_file
 from agent_runtime.core.runner import AgentRunner
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
 from agent_runtime.core.sandbox import SandboxKey, SandboxManager
+from agent_runtime.core.sandbox.factory import create_sandbox_manager
 from agent_runtime.core.session import SessionManager, SessionStore
 from agent_runtime.core.session.manager import SESSION_NOT_FOUND
 from agent_runtime.core.session.store import TranscriptStoreError
@@ -140,6 +141,7 @@ class CoreApp:
         self._provider_factory = provider_factory
         self._extra_tools_factory = extra_tools_factory or (lambda: [])
         self._sandbox_manager = sandbox_manager if sandbox_manager is not None else SandboxManager()
+        self._sandbox_injected = sandbox_manager is not None
         self._server: SocketServer | None = None
         self._sessions: SessionManager | None = None
         self._permission_manager: PermissionManager | None = None
@@ -243,7 +245,7 @@ class CoreApp:
 
     async def _delete_session_resources(self, session_id: str) -> None:
         task = self._session_resource_tasks.get(session_id)
-        if task is None:
+        if task is None or (task.done() and (task.cancelled() or task.exception() is not None)):
             task = asyncio.create_task(self._release_session_resources(session_id))
             self._session_resource_tasks[session_id] = task
         cancelled = False
@@ -1219,7 +1221,7 @@ class CoreApp:
     async def _serve(self) -> None:
         self._start_time = time.monotonic()
         self._config = get_config()
-        validate_sandbox_backend(self._config.sandbox.backend)
+        validate_runtime_sandbox(self._config)
         self._data_root = resolve_data_root(self._config)
         self._data_root.mkdir(parents=True, exist_ok=True)
         self._sessions_root = self._data_root / "sessions"
@@ -1233,6 +1235,15 @@ class CoreApp:
             self._bus.subscribe(self._trace_event_handler)
 
         config = self._config
+        if not self._sandbox_injected:
+            self._sandbox_manager = create_sandbox_manager(
+                config.sandbox,
+                self._data_root,
+                trace_sink=self._sandbox_trace,
+            )
+        # Includes CNI attestation/policy checks and scope-limited orphan scan.
+        # No listener, Worker, or command can bypass startup failure.
+        await self._sandbox_manager.start()
         if config.agent.engine == "graph":
             checkpoint_path = resolve_graph_checkpoint_path(config, self._data_root)
             if config.graph.checkpoint_backend == "sqlite":
@@ -1292,6 +1303,7 @@ class CoreApp:
             provider_factory=lambda: self._provider_for_compaction(config),
             on_session_closed=self._delete_session_resources,
             recovery_store=self._recovery_store,
+            durable_supported=config.sandbox.backend != "kubernetes",
         )
 
         server = SocketServer(
@@ -1331,6 +1343,20 @@ class CoreApp:
         _install_shutdown_handlers(loop, shutdown)
 
         await shutdown.wait()
+
+    def _sandbox_trace(self, record: dict[str, object]) -> None:
+        if self._trace is not None:
+            run_id = record.get("run_id")
+            self._trace.emit(
+                TraceRecord(
+                    ts=str(record["ts"]),
+                    direction="CORE",
+                    layer="event",
+                    kind="sandbox_lifecycle",
+                    run_id=run_id if isinstance(run_id, str) else None,
+                    data=record,
+                )
+            )
 
     async def _shutdown(self) -> None:
         logger.info("shutting down")
