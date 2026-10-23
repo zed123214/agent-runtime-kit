@@ -1,210 +1,250 @@
-# Agent Runtime Kit
+<div align="center">
 
-**面向开发者自动化的 AI Agent 运行时，支持可观测执行、人工审批、故障恢复与 Kubernetes 工具沙箱。**
+<h1>KitAgent</h1>
 
-Agent Runtime Kit 将模型调用、工具执行和会话状态组织成一套常驻运行时。CLI/TUI 通过类型化协议连接 Core；默认在本地执行，可选 LangGraph + SQLite 恢复任务，也可将命令与文件操作放入按会话管理的 Kubernetes 沙箱。
+<p><strong>在浏览器与终端中，运行你的 AI Agent</strong></p>
 
-中文 | [English](README.en.md)
+<p>开源 AI Agent 运行时与可视化工作台</p>
+<p><sub>对话驱动任务 · 实时工具追踪 · 人工审批 · 会话记忆 · Kubernetes 沙箱</sub></p>
 
-## 浏览器工作台
+<p>
+  <a href="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml"><img src="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
+  <a href="frontend/package.json"><img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" /></a>
+  <a href="docs/kubernetes-sandbox.md"><img src="https://img.shields.io/badge/Kubernetes-Sandbox-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes Sandbox" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-F5C542" alt="MIT License" /></a>
+</p>
 
-通过本机浏览器提交任务、观察工具调用、处理人工审批并导出运行报告。Web v0.1 支持 **Loop + Local**；网关持有 Core 连接，页面刷新后可继续观察原任务。使用方法见[工作台说明](docs/web-workbench.md)。
+**中文** · [English](README.en.md)
 
-![KitAgent 浏览器工作台与运行报告](docs/assets/web-workbench-overview.png)
+[产品演示](#demo) · [核心能力](#features) · [系统架构](#architecture) · [快速开始](#quick-start) · [文档导航](#docs)
 
-*离线演示采用脚本化 Provider，Core、TCP、权限和工具链均真实运行。图中的 Web 模式不包含 Graph 持久恢复或 Kubernetes 沙箱。*
+</div>
 
-[查看审批界面](docs/assets/web-workbench-approval.png) · [运行离线演示](docs/web-workbench.md#无-api-key-的真实工具演示)
+---
 
-[![CI](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
-[![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063)](https://docs.pydantic.dev/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+KitAgent 面向希望构建和使用 AI 自动化工具的开发者。你可以在浏览器或终端中描述任务，让 Agent 阅读项目、执行命令、修改文件，并在同一会话中继续协作。通过工作台，你能查看每次工具调用、处理审批、追踪子任务，并导出本轮运行报告。
 
-[核心能力](#核心能力) · [系统架构](#系统架构) · [设计取舍](#设计取舍) · [验证结果](#验证结果) · [快速开始](#快速开始) · [代码导读](#代码导读)
+项目以常驻 **Core** 管理执行与会话，提供 **Web / CLI / TUI** 三种交互入口，支持 **Loop / LangGraph** 执行引擎，以及 **Local / Kubernetes** 工具环境。
 
-## 核心能力
+<a id="demo"></a>
 
-项目围绕 Agent 执行中的几个工程问题展开：谁拥有任务状态、工具如何获准执行、进程退出后如何恢复，以及命令应该在哪个环境中运行。
+## 📸 产品演示
 
-| 能力 | 实现与价值 |
+**从一句任务描述，到可查看、可导出的执行结果。**
+
+![KitAgent 工作台：左侧管理会话，中间对话协作，右侧查看工具执行与运行报告](docs/assets/web-workbench-overview.png)
+
+<p align="center">
+  会话管理 · 多轮对话 · 工具时间线 · 运行报告<br />
+  <a href="docs/assets/web-workbench-demo.webm"><strong>▶ 观看完整演示</strong></a> · <a href="docs/web-workbench.md">启动工作台</a>
+</p>
+
+以仓库检查为例：
+
+> 检查样例 Python 仓库，执行检查脚本并生成检查报告。
+
+| 步骤 | 你在工作台中看到的内容 |
 | --- | --- |
-| **执行与交互分离** | 常驻 `agentrt-core` 管理会话和任务；CLI 与 Textual TUI 共享 JSON-RPC 2.0 over NDJSON TCP 协议。 |
-| **可替换执行引擎** | 默认 `loop` 执行模型—工具循环；可选 `graph` 显式编排节点，两者复用 Provider、工具、权限和事件链路。 |
-| **持久化恢复与人工审批** | 本地 Graph + SQLite 保存检查点、审批中断和工具调用记录；重启后经凭证校验续接原任务。 |
-| **按会话隔离工具环境** | `bash`、`read_file`、`write_file`、`list_dir` 共用 Sandbox 接口；可选 Kubernetes 后端按 Session 管理 Pod 与工作区。 |
-| **可回放的执行记录** | 流式 token、工具、权限和生命周期事件实时推送，并写入每个 run 的 `events.jsonl`。 |
-| **记忆与扩展** | 消息历史、长期笔记与压缩摘要分层保存；支持 Markdown Skills、独立上下文的子 Agent 和 MCP 工具。 |
+| **① 描述目标** | 新建会话，用自然语言提交任务。 |
+| **② 观察执行** | 查看 Agent 回复、工具参数、执行状态与输出。 |
+| **③ 参与决策** | 在审批卡片中批准或拒绝调用，也可记住本会话的工具授权。 |
+| **④ 获取结果** | 查看本轮结论、工具记录与审批记录，导出运行报告后继续对话。 |
 
-技术栈：**Python 3.12 / asyncio · Pydantic v2 · Textual · LangGraph / SQLite（可选）· Kubernetes（可选）**。当前已实现的模型 Provider 为 Anthropic。
+<details>
+<summary><strong>展开查看：工具调用与人工审批</strong></summary>
 
-## 系统架构
+![KitAgent 审批界面：查看待执行工具及参数，选择批准或拒绝](docs/assets/web-workbench-approval.png)
 
-```mermaid
-flowchart TD
-    Client["CLI / TUI"] -->|JSON-RPC over NDJSON TCP| Core["Runtime Core<br/>会话与连接生命周期"]
-    Core --> Runner["AgentRunner<br/>依赖装配与运行结果收口"]
-    Runner --> Engine["ExecutionEngine<br/>Loop 默认 / Graph 可选"]
-    Engine --> Provider["LLM Provider"]
-    Engine --> Tools["统一工具调用<br/>参数校验 → 权限审批 → 执行"]
-    Tools --> Sandbox["Sandbox Runtime<br/>命令与文件操作"]
-    Tools --> Extensions["MCP / 子 Agent / 其他工具"]
-    Sandbox --> Local["Local<br/>宿主工作目录"]
-    Sandbox --> K8s["Kubernetes<br/>Session Pod + 工作区"]
-    Runner --> Events["EventBus<br/>JSONL 持久化 / 实时推送"]
-    Events -.-> Client
-    Runner --> Session["SessionStore<br/>历史 / 笔记 / 摘要"]
-    Engine -.-> Recovery["Graph + SQLite<br/>检查点 / 审批中断 / 恢复记录"]
-```
+工作台提供「只读 / 按需询问 / 自动批准」三种会话权限模式，并支持查看和撤销已记住的工具授权。
 
-一次任务的主路径是：**客户端提交目标 → Core 创建 run → Runner 装配依赖 → 引擎调用模型与工具 → 事件落盘并推送 → 提交会话结果**。Kubernetes 模式下，只有获准的命令或文件调用才会触发沙箱创建。
+</details>
 
-## 设计取舍
+<p align="center"><sub>内置离线演示 · 脚本化模型响应 + 实际工具执行 · <a href="docs/web-workbench.md#无-api-key-的真实工具演示">在本机体验</a></sub></p>
 
-### 1. 将编排与运行时治理分开
+<a id="features"></a>
 
-`AgentRunner` 负责依赖装配、事件持久化和最终结果；`ExecutionEngine` 负责执行顺序。引擎更新同一个 `ExecutionContext`，由 Runner 校验结果并统一发布终态，避免各适配器分别维护状态。
+## ✨ 核心能力
 
-默认 Loop 保持基础安装简单。可选 LangGraph 使用显式的 `model ↔ kit_tools` 状态图，同时沿用项目自身的消息、工具与权限模型。更换编排方式时，可以保留已有的治理逻辑和客户端协议。
+### 一个 Core，三种交互方式
 
-### 2. 恢复时区分“已完成”与“结果未知”
+在 **Web 工作台**中对话、审批和查看报告，在 **CLI** 中提交任务与接入脚本，在 **Textual TUI** 中进行终端交互。三种入口共用运行时协议，任务执行和会话状态由 Core 管理。
 
-一个关键故障窗口是：**工具已产生副作用，但 Graph 节点尚未提交，Core 就退出了。** 仅恢复检查点可能再次调用工具，因此本地 durable 模式额外维护工具调用 journal，以稳定调用身份和输入摘要核对结果。
+Web 网关持续连接 Core，刷新浏览器后可以继续观察正在执行的任务。
 
-| 恢复时的调用状态 | 处理方式 |
+### 看得见的执行过程
+
+通过流式回复和工具时间线查看任务进展：调用了什么工具、输入是什么、结果如何、用了多久。每次运行的事件保存到 `events.jsonl`，支持历史回放；父任务与子任务通过关联标识串联。
+
+运行报告汇集本轮结论、工具输出和审批记录，方便复盘与分享。
+
+### 多轮协作与工具审批
+
+通过多轮对话补充要求、调整任务方向；通过审批卡片决定工具是否执行。你可以为当前会话记住某个工具的授权，也可以从权限菜单中撤销。
+
+工具注册、参数校验、权限策略和执行记录采用同一套机制，内置工具与 MCP 工具都能接入。
+
+### 会话记忆与能力扩展
+
+会话历史、长期笔记和压缩摘要分层保存，让 Agent 在后续轮次中沿用已有信息。使用 Markdown **Skills** 封装工作流程，通过 **MCP** 连接外部工具，将独立子任务交给拥有各自上下文的 **Subagents**。
+
+### 执行引擎与持久化恢复
+
+默认 **Loop** 引擎运行模型与工具循环；可选 **LangGraph** 引擎提供显式节点编排。启用 **Graph + SQLite + Local** 后，可保存执行检查点与审批中断，在 Core 重启后续接任务，并复用已经记录的工具结果。
+
+### 按会话组织的 Kubernetes 沙箱
+
+本地开发使用 **Local** 工具环境；需要独立工作区时，启用 **Kubernetes Sandbox**，为每个会话按需创建 Pod。同一会话中的多轮任务与子 Agent 共用工作区，支持资源限制、网络策略、空闲回收和关闭清理。
+
+<a id="architecture"></a>
+
+## 🏗️ 系统架构
+
+![KitAgent 系统架构：Web、CLI、TUI 连接 Core，通过共享的引擎、工具、权限和事件机制接入模型、本地环境、Kubernetes 沙箱与扩展能力](docs/assets/architecture.svg)
+
+<p align="center">
+  <a href="docs/assets/architecture.png">高清 PNG</a> · <a href="docs/assets/architecture.drawio">可编辑 draw.io 源文件</a> · <a href="docs/architecture.md">架构设计详解</a>
+</p>
+
+**任务路径：** 提交目标 → Core 创建任务 → 执行引擎调用模型 → 工具审批与执行 → 事件推送 → 会话结果。
+
+| 层次 | 技术与职责 |
 | --- | --- |
-| `completed` | 复用已保存的 `ToolResult`，跳过实际调用。 |
-| `started`，进程已丢失 | 标记 `outcome_unknown`，停止自动重放。 |
-| 同一调用身份、不同输入 | 返回冲突，拒绝继续执行。 |
+| **交互层** | React 19、TypeScript、assistant-ui、Textual；提供 Web、CLI 与 TUI。 |
+| **连接层** | FastAPI、WebSocket；网关通过 JSON-RPC 2.0 / NDJSON TCP 连接 Core。 |
+| **运行时** | Python 3.12、asyncio、Pydantic v2；管理会话、任务、权限与事件。 |
+| **执行引擎** | Loop / LangGraph；复用模型、工具和会话接口。 |
+| **模型接入** | Anthropic Provider；通过服务端配置设置模型与 API Key。 |
+| **工具环境** | Local / Kubernetes；承载命令执行与文件操作。 |
+| **持久化与扩展** | JSONL、Markdown、SQLite；支持事件回放、记忆、恢复、Skills 与 MCP。 |
 
-SQLite 检查点保存图状态与审批中断，独立 `RecoveryStore` 保存恢复凭证摘要、租约、工具 journal 和会话提交进度。恢复沿用原 `run_id` 与事件游标；客户端通过可轮换的 capability 凭证接管会话，Session ID 仅用于定位。
+## 📊 工程实测
 
-这套机制提供保守的副作用恢复语义；任意 Shell、MCP 和外部服务的通用 exactly-once 执行仍在当前能力范围之外。详见[恢复与人工审批](docs/durable-recovery.md)。
+2026-09-09，在 **单节点 kind / Kubernetes v1.36.4 / Cilium 1.20.1** 环境完成沙箱验收，使用离线 Provider 与预加载镜像。
 
-### 3. 让工具环境跟随 Session 生命周期
+| 验证项 | 结果 |
+| --- | --- |
+| **真实集群验收** | M1 **13/13**，M2 **442/442**，覆盖 12 类实验。 |
+| **并发会话隔离** | **20** 个 Session，**200** 次跨会话读写探测，泄漏 **0**。 |
+| **创建与回收** | **100/100** 完成，最终资源残留 **0**。 |
+| **沙箱冷启动** | 到 Ready 的 p95 为 **3.52 s**，30 个样本、串行采样。 |
+| **就绪后执行开销** | p95 **19.26 ms**，100 个样本，按 Core 总耗时减 Worker 命令耗时计算。 |
 
-同一 Session 的多轮任务与前台、后台、嵌套子 Agent 共享沙箱工作区；不同 Session 使用独立 Pod。沙箱按需创建，关闭会话、超时回收和异常清理进入同一条资源回收链。
+[查看沙箱配置与验收复现入口 →](docs/kubernetes-sandbox.md#构建渲染与后续验收)
 
-Kubernetes Worker 将鉴权 broker 与命令 executor 分开，执行容器不持有 Core 访问 Worker 的 token。文件 API 使用目录文件描述符与 `O_NOFOLLOW` 约束路径；运行环境配合非 root、只读根文件系统、资源限制和经过实测的 NetworkPolicy。
+<a id="quick-start"></a>
 
-Pod UID 或 Worker 代际改变后，旧 Session 会收到 `workspace_lost`，避免用空工作区冒充原环境。清理资源前校验所有权签名与 API 身份，降低误删其他资源的风险。详见[Kubernetes Sandbox](docs/kubernetes-sandbox.md)。
+## 🚀 快速开始
 
-### 4. 将实时交互与历史审计分开
+以下命令在 **Linux / WSL2 的 Bash** 中运行。准备 **Python 3.12**、[uv](https://docs.astral.sh/uv/)；Web 工作台还需要 **Node.js 22.12+** 构建前端。
 
-事件带有 `run_id`、`correlation_id` 和 `event_seq`，先持久化再推送。父子任务可以关联观察，同时各自保存事件文件；回放按游标衔接实时订阅，并对历史读取规模设限。
-
-活跃会话由创建连接持有，普通运行在断连时取消。durable 会话保留恢复状态，后续由客户端显式续接。这样，历史回放、实时事件和执行控制权各有明确边界。协议模型由 Pydantic 定义，[WIRE_PROTOCOL.md](WIRE_PROTOCOL.md) 从源码生成，并由 CI 检查漂移。
-
-## 验证结果
-
-以下为 **2026-09-09 的已记录验收结果**。Kubernetes 实验使用单节点 kind、Kubernetes v1.36.4、Cilium 1.20.1 和离线 Provider；镜像已预先导入。部署条件与验收入口见 [Kubernetes Sandbox](docs/kubernetes-sandbox.md)。
-
-| 验证项 | 结果 | 测试口径 |
-| --- | --- | --- |
-| 离线回归 | **742 passed / 14 deselected** | 同次质量检查通过 Ruff、format、strict mypy 与协议一致性检查。 |
-| 真实集群功能与实验 | **M1 13/13；M2 442/442** | M1 覆盖实际 Pod、HTTP、文件、聊天与子 Agent；M2 覆盖 12 类实验。 |
-| 会话隔离 | **20 个 Session，200 次越权读写，泄漏 0** | 同时核对各会话私有文件，并探测跨 Pod TCP。 |
-| 创建与回收 | **100/100，最终残留 0** | 覆盖并发首次调用、重复 close、65 次 close 与 35 次真实 TTL 回收。 |
-| 冷启动至 Ready | **p95 3524.51 ms** | 30 个样本，采样并发 1，不含镜像下载。 |
-| Ready 后执行开销 | **p95 19.26 ms** | 100 个样本；Core 总耗时减去 Worker 报告的命令耗时。 |
-| 网络与访问边界 | **网络探测 21/21；RBAC / 准入 18/18** | 实测 Core 允许、错误来源入口和 Sandbox 出站拒绝，以及越权操作拒绝。 |
-
-资源实验还验证了 CPU 节流、OOM、存储驱逐、命令超时和 Core 异常退出后的孤儿回收。p95 使用 nearest-rank；上述数据描述固定配置下的运行时与沙箱行为，真实模型延迟、多节点和生产负载尚未测试。原始样本保存在本机忽略目录，仓库提供验收脚本与复现入口。
-
-## 快速开始
-
-需要 **Python 3.12** 和 [uv](https://docs.astral.sh/uv/)。以下命令使用 Bash，适用于 Linux/macOS；Windows 请在 WSL2 中运行。
+### 1. 安装并配置模型
 
 ```bash
 git clone https://github.com/zed123214/agent-runtime-kit.git
 cd agent-runtime-kit
-uv sync --frozen
+uv sync --frozen --extra web
+cp .env.example .env
 ```
 
-### 先体验：无需 API Key 的离线演示
+编辑 `.env`，填写模型服务配置：
 
-运行一次确定性的模型—工具—模型路径，观察节点事件与状态变化：
+```dotenv
+ANTHROPIC_API_KEY=your-api-key
+AGENTRT_LLM_DEFAULT_MODEL=claude-sonnet-4-6
+```
+
+### 2. 构建工作台
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+### 3. 启动 Core 与 Web 网关
+
+在项目根目录打开两个终端。
+
+**终端一 · Core**
+
+```bash
+uv run --frozen --extra web agentrt-core
+```
+
+**终端二 · Web 网关**
+
+```bash
+uv run --frozen --extra web agentrt-web
+```
+
+打开网关输出的启动链接（`http://localhost:8765/#bootstrap=…`），新建会话，即可提交第一条任务。默认使用 **Loop + Local**，工具在 Core 的工作目录中执行。
+
+### 也可以从终端开始
+
+Core 启动后，在另一个终端使用 CLI 或 TUI：
+
+```bash
+# 检查连接
+uv run --frozen --extra web agentrt ping
+
+# 提交任务
+uv run --frozen --extra web agentrt run --goal "阅读项目结构，整理主要模块及其职责"
+
+# 打开终端交互界面
+uv run --frozen --extra web agentrt-tui
+```
+
+<details>
+<summary><strong>无需 API Key：体验执行引擎与跨进程恢复</strong></summary>
+
+运行模型 → 工具 → 模型的离线示例：
 
 ```bash
 uv run --frozen --extra graph python examples/graph_offline_demo.py
 ```
 
-输出摘要：
-
-```text
-provider_calls=2
-outcome=success steps=2 result='Graph offline demo completed.'
-```
-
-再验证跨进程恢复：脚本在工具结果写入 journal 后杀死第一个 Core，启动第二个 Core 续接原任务，并断言有效工具调用次数为 1、终态事件唯一。
+体验 Core 重启后续接任务、复用已完成的工具结果：
 
 ```bash
 uv run --frozen --extra graph-sqlite python examples/durable_recovery_demo.py
 ```
 
-成功输出包含 `"final_status": "success"` 和 `"tool_effective_call_count": 1`。这两个演示使用脚本化 Provider，依赖安装完成后无需访问模型服务或 Kubernetes 集群。
+浏览器离线演示见[工作台说明](docs/web-workbench.md#无-api-key-的真实工具演示)。
 
-### 再接入：真实模型与 CLI/TUI
+</details>
 
-复制配置，在 `.env` 中设置 `ANTHROPIC_API_KEY`：
+### 选择运行模式
 
-```bash
-cp .env.example .env
-```
-
-终端一启动 Core，默认监听 `127.0.0.1:7437`：
-
-```bash
-uv run --frozen agentrt-core
-```
-
-终端二使用 CLI 检查连接并提交任务：
-
-```bash
-uv run --frozen agentrt ping
-uv run --frozen agentrt run --goal "Inspect this repository and summarize the project structure"
-```
-
-也可以运行 `uv run --frozen agentrt-tui`，通过终端界面交互和处理权限审批。默认配置为 **Loop + Local**，命令与文件工具使用 Core 所在的宿主工作目录；Local 不提供操作系统级隔离。
-
-### 按需启用其他运行模式
-
-| 模式 | 适用场景 | 配置入口 |
+| 模式 | 适用场景 | 使用指南 |
 | --- | --- | --- |
-| Loop + Local（默认） | 本地任务、基础工具、会话记忆与扩展 | [运行手册](RUNBOOK.md) |
-| Graph + Memory | 显式节点编排、同一进程内的会话续接 | [Graph 引擎](docs/graph-engine.md) |
-| Graph + SQLite + Local | Core 重启恢复、持久化人工审批 | [恢复配置](docs/durable-recovery.md) |
-| Loop / Graph Memory + Kubernetes | 按 Session 隔离命令和文件工作区 | [部署与配置](docs/kubernetes-sandbox.md) |
+| **Loop + Local** | 浏览器工作台、本地开发与日常任务 | [工作台](docs/web-workbench.md) · [运行手册](RUNBOOK.md) |
+| **Graph + Memory** | 显式节点编排与进程内会话续接 | [Graph 引擎](docs/graph-engine.md) |
+| **Graph + SQLite + Local** | Core 重启恢复与持久化人工审批 | [恢复配置](docs/durable-recovery.md) |
+| **Loop / Graph Memory + Kubernetes** | 按会话分配的容器工作区 | [沙箱部署](docs/kubernetes-sandbox.md) |
 
-Kubernetes 模式要求 Core 在集群内运行、固定镜像 digest、稳定部署 scope 与 ownership key，以及已验证的 NetworkPolicy CNI。当前 Kubernetes 后端与 durable 恢复不能组合使用；M3 将继续处理持久工作区与跨 Core 恢复。
+<a id="docs"></a>
 
-## 代码导读
+## 📚 文档导航
 
-| 想了解的问题 | 建议阅读入口 |
+| 我想…… | 从这里开始 |
 | --- | --- |
-| 一次任务如何贯穿系统？ | [架构说明](docs/architecture.md) → [CoreApp](src/agent_runtime/core/app.py) → [AgentRunner](src/agent_runtime/core/runner.py) |
-| 如何更换引擎并保持一致的运行语义？ | [ExecutionEngine 接口](src/agent_runtime/core/engine/base.py) · [引擎契约测试](tests/unit/test_execution_engine.py) · [Agent Loop](docs/agent-loop.md) |
-| 工具崩溃与审批中断如何恢复？ | [恢复设计](docs/durable-recovery.md) · [工具崩溃测试](tests/integration/test_tool_crash_recovery.py) · [审批续接测试](tests/integration/test_permission_interrupt_resume.py) |
-| 沙箱如何隔离、复用与回收？ | [Sandbox 实现](src/agent_runtime/core/sandbox/) · [Worker](src/agent_runtime/sandbox_server/) · [真实集群测试](tests/integration/test_kubernetes_sandbox.py) |
-| 如何约束工具权限与长会话上下文？ | [权限设计](docs/tool-permissions.md) · [会话记忆](docs/session-memory.md) · [上下文压缩](src/agent_runtime/core/compact/) |
-| 如何接入新能力并观测执行？ | [Skills / Subagents / MCP](docs/skills-subagents-mcp.md) · [事件契约测试](tests/unit/test_run_event_contract.py) · [协议文档](WIRE_PROTOCOL.md) |
+| 使用浏览器工作台 | [Web 工作台](docs/web-workbench.md) |
+| 配置并运行项目 | [运行手册](RUNBOOK.md) |
+| 理解任务执行链路 | [系统架构](docs/architecture.md) · [Agent Loop](docs/agent-loop.md) |
+| 使用 Graph 与故障恢复 | [Graph 引擎](docs/graph-engine.md) · [持久化恢复](docs/durable-recovery.md) |
+| 部署 Kubernetes 沙箱 | [部署指南与验收复现](docs/kubernetes-sandbox.md) |
+| 配置权限和会话记忆 | [工具权限](docs/tool-permissions.md) · [会话记忆](docs/session-memory.md) |
+| 扩展工作流程与工具 | [Skills / Subagents / MCP](docs/skills-subagents-mcp.md) |
+| 开发客户端或参与贡献 | [通信协议](WIRE_PROTOCOL.md) · [贡献指南](CONTRIBUTING.md) |
 
-## 开发与检查
+## 🤝 参与贡献
 
-CI 分别验证基础安装、Graph 内存引擎与 SQLite 恢复，并执行格式、类型和协议检查。本地可安装全部可选依赖后运行离线检查：
+欢迎通过 [Issues](https://github.com/zed123214/agent-runtime-kit/issues) 分享使用场景、反馈问题，或提交 Pull Request。开发环境与检查命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-```bash
-uv sync --frozen --all-extras --dev
-uv run --frozen --all-extras ruff check src tests scripts examples
-uv run --frozen --all-extras ruff format --check src tests scripts examples
-uv run --frozen --all-extras mypy src
-uv run --frozen --all-extras pytest tests/ -m "not integration and not kubernetes" --strict-markers
-uv run --frozen --all-extras python scripts/check_wire_protocol.py --check
-```
+如果 KitAgent 对你有帮助，欢迎点一个 **Star**，也欢迎分享你用它完成的任务。
 
-真实模型测试需要 API Key，真实 Kubernetes 验收需要显式配置专用集群。修改协议模型后，运行 `uv run --frozen python scripts/generate_wire_protocol.py` 更新文档。贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-
-## License
+## 📄 License
 
 [MIT](LICENSE)

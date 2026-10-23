@@ -1,0 +1,703 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="Electron" agent="draw.io" version="30.2.6" type="device">
+  <diagram id="agent-runtime-kit" name="中文易读版">
+    <mxGraphModel dx="1400" dy="1080" grid="1" gridSize="8" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1080" math="0" shadow="0" background="#F7F9FC">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="canvas" value="" style="rounded=1;absoluteArcSize=1;arcSize=0;whiteSpace=wrap;html=0;fillColor=#F7F9FC;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1400" height="1080" as="geometry" />
+        </mxCell>
+        <mxCell id="brand-rule" value="" style="rounded=1;absoluteArcSize=1;arcSize=2;whiteSpace=wrap;html=0;fillColor=#5B54E8;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="42" width="40" height="5" as="geometry" />
+        </mxCell>
+        <mxCell id="eyebrow" value="开源 Agent Harness" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=16;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="104" y="30" width="700" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="KitAgent" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=46;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="74" width="960" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="统一管理智能体执行，让过程可观察、工具调用可审批。" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=23;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="142" width="1020" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="系统架构" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=15;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1104" y="36" width="248" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-flow" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#71829A;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1104" y="100" as="sourcePoint" />
+            <mxPoint x="1144" y="100" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend-flow-label" value="执行流程" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1156" y="86" width="196" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-state" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1104" y="144" as="sourcePoint" />
+            <mxPoint x="1144" y="144" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend-state-label" value="状态与事件" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1156" y="130" width="196" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="clients-heading" value="01  /  用户入口" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="204" width="280" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="core-heading" value="02  /  任务编排与权限控制" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#5B54E8;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="360" y="204" width="640" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="tools-heading" value="03  /  模型、工具与扩展" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="204" width="300" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-boundary" value="" style="rounded=1;absoluteArcSize=1;arcSize=22;whiteSpace=wrap;html=0;fillColor=#EEF1FF;strokeColor=#CCD4F2;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="360" y="248" width="640" height="590" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-title" value="运行时核心" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=28;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="268" width="576" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-subtitle" value="agentrt-core  /  常驻进程" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="306" width="576" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="web-to-core" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="gateway-bg" target="lifecycle-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="276" y="386" as="sourcePoint" />
+            <mxPoint x="384" y="386" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cli-to-core" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=none;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" source="terminal-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="296" y="574" as="sourcePoint" />
+            <mxPoint x="328" y="386" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="328" y="574" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lifecycle-to-engine" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" source="lifecycle-bg" target="engine-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="436" as="sourcePoint" />
+            <mxPoint x="680" y="466" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="engine-to-tools" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" source="engine-bg" target="governance-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="598" as="sourcePoint" />
+            <mxPoint x="680" y="628" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="model-roundtrip" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=blockThin;startFill=1;startSize=9;exitX=1;exitY=0.24242424242424243;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="engine-bg" target="provider-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="498" as="sourcePoint" />
+            <mxPoint x="1064" y="386" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1032" y="498" />
+              <mxPoint x="1032" y="386" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="approved-shell-file" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#BD8A30;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.4;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.1826086956521739;entryDx=0;entryDy=0;entryPerimeter=0;" source="governance-bg" target="sandbox-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="676" as="sourcePoint" />
+            <mxPoint x="1064" y="540" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1032" y="676" />
+              <mxPoint x="1032" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="approved-extensions" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#BD8A30;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.7666666666666667;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="governance-bg" target="extensions-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="720" as="sourcePoint" />
+            <mxPoint x="1064" y="800" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1020" y="720" />
+              <mxPoint x="1020" y="800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-state" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=none;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" source="runtime-boundary">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="838" as="sourcePoint" />
+            <mxPoint x="680" y="870" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-events" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="events-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="248" y="900" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="248" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-memory" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.52;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="session-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="680" y="900" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-recovery" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="recovery-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="1124" y="900" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1124" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="events-to-clients" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.12;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.1935483870967742;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" source="events-bg" target="live-events-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="96" y="900" as="sourcePoint" />
+            <mxPoint x="96" y="838" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="web-client" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="248" width="248" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="web-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="web-client">
+          <mxGeometry x="0" y="0" width="248" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="web-title" value="浏览器工作台" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="20" width="208" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="web-description" value="提交任务 · 人工审批&#10;运行报告 · 实时进度" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="58" width="208" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="gateway-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EEF1FF;strokeColor=#D6DCF7;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="110" width="208" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="gateway-label" value="网页网关" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=21;fontColor=#5B54E8;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="30" y="122" width="188" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="http-label" value="HTTP / WebSocket" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="178" width="208" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-clients" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="518" width="248" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="0" y="0" width="248" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-title" value="终端客户端" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="20" y="18" width="208" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-description" value="命令行 / 交互式界面" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="20" y="64" width="208" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="transport" value="JSON-RPC 2.0&#10;基于 TCP 的 NDJSON" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=19;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="660" width="248" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="live-client-events" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="754" width="248" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EAF7F4;strokeColor=#C2E3DB;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="live-client-events">
+          <mxGeometry x="0" y="0" width="248" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-title" value="实时事件" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=22;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="live-client-events">
+          <mxGeometry x="20" y="12" width="208" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-description" value="执行进度 · 审批 · 历史回放" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="live-client-events">
+          <mxGeometry x="20" y="47" width="218" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="run-lifecycle" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="336" width="592" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#D6DDF4;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="0" y="0" width="592" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-title" value="会话与任务生命周期" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="24" y="16" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-description" value="SessionManager · AgentRunner" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="24" y="58" width="544" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="execution-engine" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="466" width="592" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="engine-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#D6DDF4;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="0" y="0" width="592" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="engine-title" value="可替换的执行引擎" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="24" y="16" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#223554;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="24" y="68" width="260" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-label" value="Loop / default" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#FFFFFF;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="38" y="74" width="232" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="graph-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#F3F1FF;strokeColor=#B8B2F0;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="308" y="68" width="260" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="graph-label" value="Graph / optional" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#5B54E8;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="322" y="74" width="232" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tool-governance" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="628" width="592" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFF7E8;strokeColor=#ECCF98;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="tool-governance">
+          <mxGeometry x="0" y="0" width="592" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-title" value="统一工具执行与审批" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="tool-governance">
+          <mxGeometry x="24" y="17" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-description" value="参数校验 → 权限策略 / 人工审批 → 执行" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#86601D;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="tool-governance">
+          <mxGeometry x="24" y="63" width="544" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="context-capabilities" value="Skill · 任务工具 · 上下文压缩" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=21;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="774" width="592" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="extension-caption" value="统一接口约定&#10;按需替换实现" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="260" width="288" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="llm-provider" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="336" width="288" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="llm-provider">
+          <mxGeometry x="0" y="0" width="288" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-title" value="模型接入" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="llm-provider">
+          <mxGeometry x="20" y="15" width="248" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-description" value="Anthropic 适配 · 流式输出" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="llm-provider">
+          <mxGeometry x="20" y="56" width="248" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-runtime" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="498" width="288" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EFF9F5;strokeColor=#B9DDCE;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="0" y="0" width="288" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-title" value="工具执行环境" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="18" width="248" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="local-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#C9E1D7;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="62" width="248" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="local-title" value="本地执行  /  默认" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#23745E;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="68" width="224" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="local-description" value="宿主进程与文件系统" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=17;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="98" width="224" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#E3F4ED;strokeColor=#82BDA8;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="142" width="248" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-title" value="Kubernetes  /  可选" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=19;fontColor=#23745E;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="148" width="224" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-description" value="每个会话独立 Pod 与工作区" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="178" width="224" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="extension-tools" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="762" width="288" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="extension-tools">
+          <mxGeometry x="0" y="0" width="288" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-title" value="MCP + 子智能体" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=23;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="extension-tools">
+          <mxGeometry x="20" y="10" width="248" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-description" value="接入外部工具 · 委派子任务" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="extension-tools">
+          <mxGeometry x="20" y="44" width="248" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="event-bus" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="900" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="events-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EDF7FB;strokeColor=#C5DDE9;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="event-bus">
+          <mxGeometry x="0" y="0" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="event-kicker" value="EventBus" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=14;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="14" width="356" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="event-title" value="事件记录与回放" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="42" width="356" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="event-detail" value="events.jsonl → 实时推送" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=20;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="84" width="356" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="session-store" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="472" y="900" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="session-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="session-store">
+          <mxGeometry x="0" y="0" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="session-kicker" value="SessionStore" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=14;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="14" width="356" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="session-title" value="会话记忆" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="42" width="356" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="session-detail" value="对话历史 · 长期笔记 · 压缩摘要" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="84" width="356" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="durable-recovery" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="896" y="900" width="456" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#F3F1FD;strokeColor=#C4BDED;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="0" y="0" width="456" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-kicker" value="图编排 + SQLite  /  可选" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=14;fontColor=#5B54E8;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="14" width="412" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-title" value="持久化与故障恢复" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="42" width="412" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-detail" value="检查点 · 审批状态 · 工具执行日志" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Microsoft YaHei, Noto Sans CJK SC, PingFang SC, sans-serif;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="84" width="412" height="28" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="agent-runtime-kit-en" name="English">
+    <mxGraphModel dx="1400" dy="1080" grid="1" gridSize="8" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1080" math="0" shadow="0" background="#F7F9FC">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="canvas" value="" style="rounded=1;absoluteArcSize=1;arcSize=0;whiteSpace=wrap;html=0;fillColor=#F7F9FC;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1400" height="1080" as="geometry" />
+        </mxCell>
+        <mxCell id="brand-rule" value="" style="rounded=1;absoluteArcSize=1;arcSize=2;whiteSpace=wrap;html=0;fillColor=#5B54E8;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="42" width="40" height="5" as="geometry" />
+        </mxCell>
+        <mxCell id="eyebrow" value="OPEN SOURCE AGENT HARNESS" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=16;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="104" y="30" width="700" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="KitAgent" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=46;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="74" width="960" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="One runtime for observable, permissioned agent execution." style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=23;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="142" width="1020" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="SYSTEM ARCHITECTURE" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=15;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1104" y="36" width="248" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-flow" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#71829A;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1104" y="100" as="sourcePoint" />
+            <mxPoint x="1144" y="100" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend-flow-label" value="Execution flow" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1156" y="86" width="196" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-state" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1104" y="144" as="sourcePoint" />
+            <mxPoint x="1144" y="144" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend-state-label" value="State / events" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1156" y="130" width="196" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="clients-heading" value="01  /  CONNECT" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="204" width="280" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="core-heading" value="02  /  ORCHESTRATE &amp; GOVERN" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#5B54E8;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="360" y="204" width="640" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="tools-heading" value="03  /  EXECUTE &amp; EXTEND" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#53647C;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="204" width="300" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-boundary" value="" style="rounded=1;absoluteArcSize=1;arcSize=22;whiteSpace=wrap;html=0;fillColor=#EEF1FF;strokeColor=#CCD4F2;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="1">
+          <mxGeometry x="360" y="248" width="640" height="590" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-title" value="Runtime Core" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=28;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="268" width="576" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-subtitle" value="agentrt-core  /  long-running process" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="306" width="576" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="web-to-core" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="gateway-bg" target="lifecycle-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="276" y="386" as="sourcePoint" />
+            <mxPoint x="384" y="386" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cli-to-core" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=none;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" source="terminal-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="296" y="574" as="sourcePoint" />
+            <mxPoint x="328" y="386" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="328" y="574" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lifecycle-to-engine" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" source="lifecycle-bg" target="engine-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="436" as="sourcePoint" />
+            <mxPoint x="680" y="466" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="engine-to-tools" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" source="engine-bg" target="governance-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="598" as="sourcePoint" />
+            <mxPoint x="680" y="628" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="model-roundtrip" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#5B54E8;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=blockThin;startFill=1;startSize=9;exitX=1;exitY=0.24242424242424243;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="engine-bg" target="provider-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="498" as="sourcePoint" />
+            <mxPoint x="1064" y="386" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1032" y="498" />
+              <mxPoint x="1032" y="386" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="approved-shell-file" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#BD8A30;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.4;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.1826086956521739;entryDx=0;entryDy=0;entryPerimeter=0;" source="governance-bg" target="sandbox-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="676" as="sourcePoint" />
+            <mxPoint x="1064" y="540" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1032" y="676" />
+              <mxPoint x="1032" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="approved-extensions" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#BD8A30;strokeWidth=2;dashed=0;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=1;exitY=0.7666666666666667;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" source="governance-bg" target="extensions-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="976" y="720" as="sourcePoint" />
+            <mxPoint x="1064" y="800" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1020" y="720" />
+              <mxPoint x="1020" y="800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-state" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=none;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" source="runtime-boundary">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="838" as="sourcePoint" />
+            <mxPoint x="680" y="870" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-events" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="events-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="248" y="900" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="248" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-memory" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.52;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="session-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="680" y="900" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="core-to-recovery" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" target="recovery-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="870" as="sourcePoint" />
+            <mxPoint x="1124" y="900" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1124" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="events-to-clients" value="" edge="1" parent="1" style="edgeStyle=none;rounded=1;curved=0;html=0;strokeColor=#178F86;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=blockThin;endFill=1;endSize=9;startArrow=none;startFill=1;startSize=9;exitX=0.12;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.1935483870967742;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" source="events-bg" target="live-events-bg">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="96" y="900" as="sourcePoint" />
+            <mxPoint x="96" y="838" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="web-client" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="248" width="248" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="web-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="web-client">
+          <mxGeometry x="0" y="0" width="248" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="web-title" value="Web workbench" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="20" width="208" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="web-description" value="Tasks · approvals&#10;Reports · live progress" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="58" width="208" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="gateway-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;whiteSpace=wrap;html=0;fillColor=#EEF1FF;strokeColor=#D6DCF7;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="110" width="208" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="gateway-label" value="Web Gateway" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=21;fontColor=#5B54E8;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="30" y="122" width="188" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="http-label" value="HTTP / WebSocket" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="web-client">
+          <mxGeometry x="20" y="178" width="208" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-clients" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="518" width="248" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="0" y="0" width="248" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-title" value="CLI / TUI" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="20" y="18" width="208" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="terminal-description" value="Terminal workflows" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="terminal-clients">
+          <mxGeometry x="20" y="64" width="208" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="transport" value="JSON-RPC 2.0&#10;NDJSON over TCP" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=19;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="48" y="660" width="248" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="live-client-events" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="754" width="248" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EAF7F4;strokeColor=#C2E3DB;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="live-client-events">
+          <mxGeometry x="0" y="0" width="248" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-title" value="Live events" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=22;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="live-client-events">
+          <mxGeometry x="20" y="12" width="208" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="live-events-description" value="Progress · approvals · replay" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="live-client-events">
+          <mxGeometry x="20" y="47" width="218" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="run-lifecycle" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="336" width="592" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#D6DDF4;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="0" y="0" width="592" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-title" value="Session &amp; run lifecycle" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="24" y="16" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="lifecycle-description" value="SessionManager · AgentRunner" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="run-lifecycle">
+          <mxGeometry x="24" y="58" width="544" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="execution-engine" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="466" width="592" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="engine-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#D6DDF4;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="0" y="0" width="592" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="engine-title" value="Pluggable execution engine" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="24" y="16" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#223554;strokeColor=none;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="24" y="68" width="260" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-label" value="Loop  /  default" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#FFFFFF;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="38" y="74" width="232" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="graph-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#F3F1FF;strokeColor=#B8B2F0;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="execution-engine">
+          <mxGeometry x="308" y="68" width="260" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="graph-label" value="Graph  /  optional" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#5B54E8;fontStyle=1;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="execution-engine">
+          <mxGeometry x="322" y="74" width="232" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tool-governance" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="384" y="628" width="592" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFF7E8;strokeColor=#ECCF98;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="tool-governance">
+          <mxGeometry x="0" y="0" width="592" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-title" value="One tool-governance path" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="tool-governance">
+          <mxGeometry x="24" y="17" width="544" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="governance-description" value="Validate → policy / human approval → invoke" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#86601D;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="tool-governance">
+          <mxGeometry x="24" y="63" width="544" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="context-capabilities" value="Skills · task tools · context compaction" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=21;fontColor=#53647C;fontStyle=0;align=center;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="384" y="774" width="592" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="extension-caption" value="Shared contracts.&#10;Replaceable implementations." style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="260" width="288" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="llm-provider" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="336" width="288" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="llm-provider">
+          <mxGeometry x="0" y="0" width="288" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-title" value="LLM provider" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="llm-provider">
+          <mxGeometry x="20" y="15" width="248" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="provider-description" value="Anthropic adapter · streaming" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="llm-provider">
+          <mxGeometry x="20" y="56" width="248" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-runtime" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="498" width="288" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EFF9F5;strokeColor=#B9DDCE;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="0" y="0" width="288" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox-title" value="Sandbox runtime" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=24;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="18" width="248" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="local-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#C9E1D7;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="62" width="248" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="local-title" value="Local  /  default" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#23745E;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="68" width="224" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="local-description" value="Host process + filesystem" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=17;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="98" width="224" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;html=0;fillColor=#E3F4ED;strokeColor=#82BDA8;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="20" y="142" width="248" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-title" value="Kubernetes  /  optional" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=19;fontColor=#23745E;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="148" width="224" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="kubernetes-description" value="Pod + workspace per session" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="sandbox-runtime">
+          <mxGeometry x="32" y="178" width="224" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="extension-tools" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="762" width="288" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="extension-tools">
+          <mxGeometry x="0" y="0" width="288" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-title" value="MCP + subagents" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=23;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="extension-tools">
+          <mxGeometry x="20" y="10" width="248" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="extensions-description" value="External tools · delegated work" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=16;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="extension-tools">
+          <mxGeometry x="20" y="44" width="248" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="event-bus" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="48" y="900" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="events-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#EDF7FB;strokeColor=#C5DDE9;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="event-bus">
+          <mxGeometry x="0" y="0" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="event-kicker" value="EVENTBUS" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=14;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="14" width="356" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="event-title" value="Events &amp; replay" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="42" width="356" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="event-detail" value="events.jsonl → live clients" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=20;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="event-bus">
+          <mxGeometry x="22" y="84" width="356" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="session-store" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="472" y="900" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="session-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#FFFFFF;strokeColor=#DCE4EF;strokeWidth=1.5;dashed=0;dashPattern=5 4;shadow=0;" vertex="1" parent="session-store">
+          <mxGeometry x="0" y="0" width="400" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="session-kicker" value="SESSIONSTORE" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=14;fontColor=#178F86;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="14" width="356" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="session-title" value="Session memory" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="42" width="356" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="session-detail" value="History · notes · compacted context" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=18;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="session-store">
+          <mxGeometry x="22" y="84" width="356" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="durable-recovery" value="" style="group;" vertex="1" parent="1">
+          <mxGeometry x="896" y="900" width="456" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-bg" value="" style="rounded=1;absoluteArcSize=1;arcSize=16;whiteSpace=wrap;html=0;fillColor=#F3F1FD;strokeColor=#C4BDED;strokeWidth=1.5;dashed=1;dashPattern=5 4;shadow=0;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="0" y="0" width="456" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-kicker" value="GRAPH + SQLITE  /  OPTIONAL" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=14;fontColor=#5B54E8;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="14" width="412" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-title" value="Durable recovery" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=25;fontColor=#172B46;fontStyle=1;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="42" width="412" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="recovery-detail" value="Checkpoints · approvals · tool journal" style="text;html=0;strokeColor=none;fillColor=none;whiteSpace=nowrap;fontFamily=Arial;fontSize=19;fontColor=#53647C;fontStyle=0;align=left;verticalAlign=middle;spacing=0;overflow=visible;" vertex="1" parent="durable-recovery">
+          <mxGeometry x="22" y="84" width="412" height="28" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

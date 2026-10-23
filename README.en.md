@@ -1,340 +1,250 @@
-# Agent Runtime Kit
+<div align="center">
 
-Local AI Agent runtime framework with a long-running Agent Runtime Core, typed
-IPC, event streaming, tool permissions, session memory, context compaction,
-subagents, and MCP tools.
+<h1>KitAgent</h1>
 
-[中文](README.md) | English
+<p><strong>Run your AI agent from the browser or terminal</strong></p>
 
-[![CI](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
-[![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063)](https://docs.pydantic.dev/)
-[![Textual](https://img.shields.io/badge/Textual-TUI-7B2CBF)](https://textual.textualize.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+<p>An open-source AI agent runtime and visual workbench</p>
+<p><sub>Conversational tasks · Live tool tracking · Human approval · Session memory · Kubernetes sandboxes</sub></p>
 
-## Why This Project
+<p>
+  <a href="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml"><img src="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
+  <a href="frontend/package.json"><img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" /></a>
+  <a href="docs/kubernetes-sandbox.md"><img src="https://img.shields.io/badge/Kubernetes-Sandbox-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes Sandbox" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-F5C542" alt="MIT License" /></a>
+</p>
 
-Modern AI agents need more than an LLM API wrapper. They need a long-running
-execution process, typed IPC, observable event streams, safe local tool
-execution, persistent session memory, and a unified extension model for tools,
-skills, subagents, and MCP servers.
+[中文](README.md) · **English**
 
-Agent Runtime Kit implements those runtime primitives in Python. The current
-provider implementation uses Anthropic models, but the core runtime is designed
-around provider boundaries: the main value is the runtime core, protocol, tool,
-permission, session, and event infrastructure around the model.
+[Demo](#demo) · [Features](#features) · [Architecture](#architecture) · [Quick Start](#quick-start) · [Documentation](#docs)
 
-## Supported Runtime
+</div>
 
-This repository is packaged for Linux/macOS-style environments. Native Windows
-runtime execution is not a supported target because the current runbook,
-process-control commands, and shell-tool behavior assume POSIX semantics.
+---
 
-On Windows machines, use WSL2 or Docker for runtime experiments. The source code
-and documentation can still be reviewed directly from Windows.
+KitAgent is for developers who build and use AI automation tools. Describe a task in your browser or terminal, let the agent read your project, run commands, and edit files, then continue in the same conversation. Use the workbench to inspect tool calls, handle approvals, follow subtasks, and export a report for each run.
 
-## Architecture
+A persistent **Core** manages execution and sessions, with **Web / CLI / TUI** interfaces, **Loop / LangGraph** engines, and **Local / Kubernetes** tool environments.
 
-```mermaid
-graph TD
-    User((Developer)) --> CLI["agentrt CLI"]
-    User --> TUI["agentrt-tui"]
+<a id="demo"></a>
 
-    CLI -->|JSON-RPC 2.0 over NDJSON TCP| Core["agentrt-core (Runtime Core)"]
-    TUI -->|subscribe / replay events| Core
+## 📸 Demo
 
-    subgraph Runtime["Agent Runtime"]
-        Core --> Session["SessionManager\nthread.jsonl / notes.md"]
-        Core --> Runner["AgentRunner"]
-        Runner --> Engine["ExecutionEngine\nloop default / graph optional"]
-        Engine --> LoopEngine["LoopExecutionEngine"]
-        Engine --> GraphEngine["GraphExecutionEngine\nStateGraph orchestration"]
-        LoopEngine --> Loop["AgentLoop\nplan-act-observe"]
-        GraphEngine --> Graph["model ↔ kit_tools"]
-        Loop --> LLM["LLM Provider\nstreaming + usage"]
-        Loop --> Registry["ToolRegistry"]
-        Graph --> LLM
-        Graph --> Registry
-        Registry --> Permission["PermissionManager"]
-        Registry --> Builtins["Built-in tools\nread/write/list/bash/task"]
-        Registry --> MCP["MCP tools"]
-        Registry --> SubAgent["Subagents"]
-        Runner --> Compact["Compactor\ncontext budget"]
-    end
+**From a task description to results you can inspect and export.**
 
-    subgraph Observability["Observability"]
-        Loop --> EventBus["EventBus"]
-        Permission --> EventBus
-        SubAgent --> EventBus
-        EventBus --> Writer["events.jsonl"]
-        EventBus --> Broadcast["IPC broadcaster"]
-        Broadcast --> TUI
-    end
-```
+![KitAgent workbench: sessions on the left, conversation in the center, and tool records and the run report on the right](docs/assets/web-workbench-overview.png)
 
-## Core Capabilities
+<p align="center">
+  Sessions · Multi-turn chat · Tool timeline · Run reports<br />
+  <a href="docs/assets/web-workbench-demo.webm"><strong>▶ Watch the full demo</strong></a> · <a href="docs/web-workbench.md">Launch the workbench</a>
+</p>
 
-1. **Runtime Core + CLI/TUI clients**: the long-running `agentrt-core` process
-   centrally manages session, execution, and event state. Live sessions are bound to their creating
-   connection; disconnects cancel in-flight work, while persisted events remain
-   available for read-only replay through a strong random run ID.
-2. **Typed IPC**: requests, responses, errors, and events are modeled with
-   Pydantic and exposed through JSON-RPC 2.0 over NDJSON TCP.
-3. **Generated protocol docs**: `WIRE_PROTOCOL.md` is generated from source
-   protocol models so documentation does not drift from code.
-4. **Pluggable execution engines**: `AgentRunner` uses the typed
-   `ExecutionEngine` boundary. The default loop preserves existing behavior;
-   the optional Graph engine schedules an explicit `model <-> kit_tools` graph
-   while reusing the provider, tools, permissions, events, and SessionStore.
-5. **ToolRegistry + PermissionManager**: built-in tools and MCP tools share
-   schema validation, permission checks, event emission, and structured results.
-6. **Session memory**: full message history is stored in `thread.jsonl`, while
-   curated long-term notes live in `notes.md`.
-7. **Context governance**: tool results can be truncated, context watermarks are
-   tracked, and compact summaries can replace oversized histories.
-8. **Skills, Subagents, and MCP**: Markdown skills, isolated subagents, and MCP
-   tools reuse the same registry, permission, event, and runner primitives.
+For a repository check, start with:
 
-## Resume Evidence Map
+> Inspect the sample Python repository, run its check script, and write a report.
 
-| Resume claim | Evidence in this repository |
+| Step | What you see in the workbench |
 | --- | --- |
-| Runtime Core + CLI/TUI multi-process architecture | `src/agent_runtime/core/app.py`, `src/agent_runtime/cli/`, `src/agent_runtime/tui/`, `docs/architecture.md` |
-| JSON-RPC 2.0 over NDJSON TCP | `src/agent_runtime/core/bus/`, `src/agent_runtime/core/transport/`, `WIRE_PROTOCOL.md` |
-| Type-safe protocol boundary | Pydantic protocol models, strict `mypy`, generated `WIRE_PROTOCOL.md` |
-| Observable event stream | `EventBus`, `events.jsonl`, replayable client subscriptions |
-| Runtime-level tool permission control | `src/agent_runtime/core/permissions/`, `docs/tool-permissions.md`, `examples/permissions/` |
-| Recoverable LLM/tool execution loop | `src/agent_runtime/core/loop.py`, `src/agent_runtime/core/runner.py`, unit and integration tests |
-| Session memory and context governance | `src/agent_runtime/core/session/`, `src/agent_runtime/core/compact/`, `docs/session-memory.md` |
-| Unified extension model | `src/agent_runtime/core/skills/`, `src/agent_runtime/core/subagent/`, `src/agent_runtime/core/mcp/`, `examples/` |
+| **① Describe the goal** | Create a session and submit a task in natural language. |
+| **② Follow execution** | Read agent responses, tool arguments, execution status, and output. |
+| **③ Make decisions** | Approve or reject calls, and remember tool grants for the session. |
+| **④ Use the result** | Review the conclusion, tools, and approvals; export the report and continue chatting. |
 
-## Quick Start
+<details>
+<summary><strong>See tool calls and human approval</strong></summary>
 
-### Requirements
+![KitAgent approval view: inspect the pending tool and arguments, then approve or reject](docs/assets/web-workbench-approval.png)
 
-- Linux/macOS, WSL2, or Docker
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
-- `ANTHROPIC_API_KEY` for real LLM runs
+Choose Read-only, Ask as needed, or Auto-approve for a session. View and revoke remembered tool grants from the permission menu.
 
-### Install
+</details>
+
+<p align="center"><sub>Built-in offline demo · Scripted model responses + live tool execution · <a href="docs/web-workbench.md#无-api-key-的真实工具演示">Try it locally</a></sub></p>
+
+<a id="features"></a>
+
+## ✨ Features
+
+### One Core, three interfaces
+
+Chat, approve calls, and inspect reports in the **Web workbench**. Submit tasks and integrate scripts through the **CLI**, or work in the terminal with the **Textual TUI**. All three interfaces share the runtime protocol, with Core managing task and session state.
+
+The Web gateway maintains its Core connection, so you can refresh the browser and keep following an active task.
+
+### Execution you can inspect
+
+Follow streaming responses and a tool timeline to see which tools ran, their inputs, outputs, and timing. Each run records events in `events.jsonl` for replay; correlation IDs connect parent and child tasks.
+
+Export a run report with the conclusion, tool output, and approval records for review or sharing.
+
+### Collaboration and tool approval
+
+Add requirements and adjust direction through multi-turn conversation. Use approval cards to decide whether a tool should run, remember a tool grant for the session, or revoke it from the permission menu.
+
+Built-in tools and MCP tools share registration, argument validation, permission policies, and execution records.
+
+### Session memory and extensions
+
+Keep conversation history, long-term notes, and compact summaries across turns. Package workflows as Markdown **Skills**, connect external tools through **MCP**, and delegate independent work to **Subagents** with their own contexts.
+
+### Engine choice and durable recovery
+
+Use the default **Loop** engine for model–tool execution or **LangGraph** for explicit node orchestration. With **Graph + SQLite + Local**, save checkpoints and approval interrupts, resume after a Core restart, and reuse recorded tool results.
+
+### Kubernetes workspaces per session
+
+Use **Local** tools for development, or enable **Kubernetes Sandbox** to create a Pod on demand for each session. Turns and subagents within a session share the workspace, with resource limits, network policies, idle reclamation, and cleanup on close.
+
+<a id="architecture"></a>
+
+## 🏗️ Architecture
+
+![KitAgent architecture: Web, CLI, and TUI connect to Core, sharing engines, tools, permissions, and events across model providers, Local and Kubernetes environments, and extensions](docs/assets/architecture.en.svg)
+
+<p align="center">
+  <a href="docs/assets/architecture.en.png">High-resolution PNG</a> · <a href="docs/assets/architecture.drawio">Editable draw.io source</a> · <a href="docs/architecture.md">Architecture details</a>
+</p>
+
+**Follow a task:** submit a goal → Core creates a run → engine calls the model → approve and execute tools → stream events → commit the session result.
+
+| Layer | Technology and responsibility |
+| --- | --- |
+| **Interfaces** | React 19, TypeScript, assistant-ui, Textual; Web, CLI, and TUI. |
+| **Transport** | FastAPI and WebSocket; the gateway connects to Core through JSON-RPC 2.0 / NDJSON TCP. |
+| **Runtime** | Python 3.12, asyncio, Pydantic v2; sessions, tasks, permissions, and events. |
+| **Engines** | Loop / LangGraph; shared model, tool, and session interfaces. |
+| **Model integration** | Anthropic Provider; server-side model and API key configuration. |
+| **Tool environments** | Local / Kubernetes; command execution and file operations. |
+| **Storage and extensions** | JSONL, Markdown, SQLite; replay, memory, recovery, Skills, and MCP. |
+
+## 📊 Measured Results
+
+Sandbox validation completed on **September 9, 2026**, using **single-node kind / Kubernetes v1.36.4 / Cilium 1.20.1**, an offline provider, and preloaded images.
+
+| Check | Result |
+| --- | --- |
+| **Live-cluster validation** | M1 **13/13**, M2 **442/442**, across 12 experiment categories. |
+| **Concurrent session isolation** | **20** sessions, **200** cross-session read/write probes, **0** leaks. |
+| **Creation and cleanup** | **100/100** completed, **0** resources left at the end. |
+| **Sandbox cold start** | **3.52 s** p95 to Ready, 30 serial samples. |
+| **Execution overhead after Ready** | **19.26 ms** p95, 100 samples; Core duration minus Worker command duration. |
+
+[Sandbox configuration and validation walkthrough →](docs/kubernetes-sandbox.md#构建渲染与后续验收)
+
+<a id="quick-start"></a>
+
+## 🚀 Quick Start
+
+Run these commands in **Bash on Linux / WSL2**. Install **Python 3.12** and [uv](https://docs.astral.sh/uv/). The Web workbench also needs **Node.js 22.12+** to build its frontend.
+
+### 1. Install and configure the model
 
 ```bash
 git clone https://github.com/zed123214/agent-runtime-kit.git
 cd agent-runtime-kit
-uv sync
-```
-
-### Configure
-
-The four shell/file tools execute through Sandbox Runtime. The default remains
-`[sandbox] backend = "local"`; `AGENTRT_SANDBOX_BACKEND=local` overrides TOML.
-Local uses the host cwd and filesystem, accepts existing absolute paths, and
-provides no physical isolation. Release does not delete project or user files.
-M1 adds an optional Kubernetes backend with one Session Pod, a ClusterIP Service,
-and an authenticated command/text-file Worker. It requires one in-cluster Core,
-digest-pinned images, a stable deployment scope and ownership key, and a validated
-NetworkPolicy CNI. Missing dependencies/configuration fail before listening.
-Kubernetes durable sessions (including automatic durable chat) require M3;
-Local recovery remains available. See the [Kubernetes Sandbox guide](docs/kubernetes-sandbox.md)
-for deployment, configuration, and validation commands.
-
-```bash
+uv sync --frozen --extra web
 cp .env.example .env
 ```
 
-Example:
+Edit `.env` with your model configuration:
 
-```env
-AGENTRT_HOST=127.0.0.1
-AGENTRT_PORT=7437
-AGENTRT_LOG_LEVEL=INFO
-AGENTRT_LOG_FILE=~/.agentrt/logs/core.log
-AGENTRT_LOG_FORMAT=text
-# ANTHROPIC_API_KEY=sk-ant-your-key-here
-# AGENTRT_LLM_DEFAULT_MODEL=claude-sonnet-4-6
-# AGENTRT_MAX_STEPS=20
-# AGENTRT_ENGINE=loop
+```dotenv
+ANTHROPIC_API_KEY=your-api-key
+AGENTRT_LLM_DEFAULT_MODEL=claude-sonnet-4-6
 ```
 
-Never commit a real API key. Keep local secrets in `.env` or your shell
-environment.
-
-### Run
+### 2. Build the workbench
 
 ```bash
-uv run agentrt-core
-uv run agentrt ping
-uv run agentrt run --goal "Inspect this repository and summarize the project structure"
-uv run agentrt-tui
+cd frontend
+npm ci
+npm run build
+cd ..
 ```
 
-### Optional LangGraph engine and SQLite recovery (P1/P2)
+### 3. Start Core and the Web gateway
 
-The original Quick Start remains on `loop` and installs no Graph dependency.
-LangGraph owns explicit orchestration only; KitAgent continues to own providers,
-native messages, tool and permission governance, events, SessionStore, and the
-runner's single terminal boundary. Enable it in PowerShell:
+Open two terminals in the repository root.
 
-```powershell
-uv sync --extra graph
-$env:AGENTRT_ENGINE = 'graph'
-uv run agentrt-core
-```
-
-Connect from a second PowerShell window:
-
-```powershell
-$env:AGENTRT_ENGINE = 'graph'
-uv run agentrt chat
-```
-
-The default Graph backend uses process-local `InMemorySaver` state to continue
-one Session and isolate threads; `thread.jsonl` remains authoritative. Enable
-the SQLite backend explicitly for `agentrt-core` restart recovery and human
-approval:
-
-```powershell
-uv sync --extra graph-sqlite
-$env:AGENTRT_ENGINE = 'graph'
-$env:AGENTRT_GRAPH_CHECKPOINT_BACKEND = 'sqlite'
-$env:AGENTRT_DATA_ROOT = 'D:\agentrt-data'
-uv run agentrt-core
-```
-
-P2 uses the official async SQLite saver for Graph state and interrupts, plus a
-separate RecoveryStore for capability hashes, resume leases, transcript commit
-progress, and the tool journal. A logical run keeps its run ID and monotonic
-event cursor across resume attempts. See [Optional LangGraph Engine](docs/graph-engine.md)
-for memory compatibility and [Durable Graph Recovery and Human Approval](docs/durable-recovery.md)
-for recovery, HITL, crash-window, and scope details.
-
-## Event Stream Example
-
-```json
-{"type":"run.started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":1,"goal":"...","ts":"..."}
-{"type":"llm.token","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":2,"token":"I","ts":"..."}
-{"type":"tool.call_started","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":3,"tool_use_id":"toolu_01","tool_name":"list_dir","params":{},"ts":"..."}
-{"type":"permission.requested","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":4,"tool_use_id":"toolu_02","tool_name":"bash","params":{"command":"..."},"param_preview":"command=...","ts":"..."}
-{"type":"tool.call_finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":5,"tool_use_id":"toolu_01","tool_name":"list_dir","elapsed_ms":3,"output":"...","ts":"..."}
-{"type":"run.finished","run_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","correlation_id":"20260629-101500-a1b2c3d4e5f67890a1b2c3d4e5f67890","session_id":"sess-abc123","node_id":null,"event_seq":6,"status":"success","reason":null,"steps":2,"error":null,"ts":"..."}
-```
-
-## Repository Map
-
-```text
-agent-runtime-kit/
-|-- README.md
-|-- README.en.md
-|-- RUNBOOK.md
-|-- WIRE_PROTOCOL.md
-|-- docs/
-|   |-- architecture.md
-|   |-- agent-loop.md
-|   |-- graph-engine.md
-|   |-- durable-recovery.md
-|   |-- tool-permissions.md
-|   |-- session-memory.md
-|   |-- skills-subagents-mcp.md
-|   `-- web-workbench.md
-|-- examples/
-|   |-- graph_offline_demo.py
-|   |-- durable_recovery_demo.py
-|   |-- basic_run/
-|   |-- permissions/
-|   |   `-- trace_permission_flow.py
-|   |-- skills/
-|   `-- mcp/
-|-- scripts/
-|   |-- generate_wire_protocol.py
-|   `-- check_wire_protocol.py
-|-- src/agent_runtime/
-|   |-- cli/
-|   |-- tui/
-|   `-- core/
-|       |-- app.py
-|       |-- engine/
-|       |   |-- base.py
-|       |   |-- loop_engine.py
-|       |   `-- router.py
-|       |-- graph/
-|       |-- runner.py
-|       |-- loop.py
-|       |-- bus/
-|       |-- transport/
-|       |-- tools/
-|       |-- permissions/
-|       |-- session/
-|       |-- compact/
-|       |-- skills/
-|       |-- subagent/
-|       |-- mcp/
-|       `-- trace/
-`-- tests/
-    |-- unit/
-    `-- integration/
-```
-
-## Development
-
-The base install excludes LangGraph. It supports the base checks and tests that
-are neither Graph-specific nor online integration tests:
+**Terminal one · Core**
 
 ```bash
-uv run ruff check src tests scripts examples
-uv run ruff format --check src tests scripts examples
-uv run pytest tests/ -m "not graph and not recovery and not integration" -v
-uv run python scripts/check_wire_protocol.py --check
+uv run --frozen --extra web agentrt-core
 ```
 
-The full source type check includes the SQLite recovery modules, so install the
-graph-sqlite extra before running Mypy:
+**Terminal two · Web gateway**
 
 ```bash
-uv sync --extra graph
-uv run pytest tests/ -m "graph and not recovery and not integration" -v
-uv sync --extra graph-sqlite
-uv run mypy src
-uv run pytest tests/ -m "recovery and not integration" --strict-markers -v
+uv run --frozen --extra web agentrt-web
 ```
 
-On native Windows, if `uv` script entry points fail with a trampoline path
-error, run tools through Python modules instead:
+Open the gateway's startup link (`http://localhost:8765/#bootstrap=…`), create a session, and submit your first task. The default is **Loop + Local**, with tools running in Core's working directory.
+
+### Prefer the terminal?
+
+With Core running, use the CLI or TUI in another terminal:
 
 ```bash
-uv run python -m mypy src
-uv run python -m pytest tests/ -v
+# Check the connection
+uv run --frozen --extra web agentrt ping
+
+# Submit a task
+uv run --frozen --extra web agentrt run --goal "Read the project structure and summarize the main modules"
+
+# Open the terminal interface
+uv run --frozen --extra web agentrt-tui
 ```
 
-Regenerate protocol docs after changing `src/agent_runtime/core/bus/` models:
+<details>
+<summary><strong>No API key needed: try the engine and cross-process recovery</strong></summary>
+
+Run the offline model → tool → model example:
 
 ```bash
-uv run python scripts/generate_wire_protocol.py
+uv run --frozen --extra graph python examples/graph_offline_demo.py
 ```
 
-## Documentation
+Resume a task after a Core restart and reuse completed tool results:
 
-- [Architecture](docs/architecture.md)
-- [Agent Loop](docs/agent-loop.md)
-- [Optional LangGraph Engine](docs/graph-engine.md)
-- [Durable Graph Recovery and Human Approval](docs/durable-recovery.md)
-- [Tool Permissions](docs/tool-permissions.md)
-- [Session Memory](docs/session-memory.md)
-- [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)
-- [Browser Workbench](docs/web-workbench.md)
-- [Runbook](RUNBOOK.md)
-- [Wire Protocol](WIRE_PROTOCOL.md)
+```bash
+uv run --frozen --extra graph-sqlite python examples/durable_recovery_demo.py
+```
 
-## Safety Notes
+For an offline browser demo, see the [workbench guide](docs/web-workbench.md#无-api-key-的真实工具演示).
 
-- `.env`, logs, session data, caches, virtual environments, and local workspaces
-  should not be committed.
-- Shell, file writes, and external MCP tools are routed through the permission
-  system before execution.
-- This is a portfolio and learning project. Production use would require
-  additional sandboxing, security review, resource isolation, and operational
-  hardening.
+</details>
 
-## License
+### Choose a runtime mode
 
-MIT License. See [LICENSE](LICENSE).
+| Mode | Use case | Guide |
+| --- | --- | --- |
+| **Loop + Local** | Web workbench, local development, and everyday tasks | [Workbench](docs/web-workbench.md) · [Runbook](RUNBOOK.md) |
+| **Graph + Memory** | Explicit node orchestration and in-process session continuation | [Graph engine](docs/graph-engine.md) |
+| **Graph + SQLite + Local** | Core restart recovery and durable human approval | [Recovery](docs/durable-recovery.md) |
+| **Loop / Graph Memory + Kubernetes** | Container workspaces per session | [Sandbox deployment](docs/kubernetes-sandbox.md) |
+
+<a id="docs"></a>
+
+## 📚 Documentation
+
+| I want to… | Start here |
+| --- | --- |
+| Use the browser workbench | [Web workbench](docs/web-workbench.md) |
+| Configure and run the project | [Runbook](RUNBOOK.md) |
+| Follow task execution | [Architecture](docs/architecture.md) · [Agent Loop](docs/agent-loop.md) |
+| Use Graph and recovery | [Graph engine](docs/graph-engine.md) · [Durable recovery](docs/durable-recovery.md) |
+| Deploy Kubernetes sandboxes | [Deployment and validation](docs/kubernetes-sandbox.md) |
+| Configure permissions and memory | [Tool permissions](docs/tool-permissions.md) · [Session memory](docs/session-memory.md) |
+| Extend workflows and tools | [Skills / Subagents / MCP](docs/skills-subagents-mcp.md) |
+| Build a client or contribute | [Wire protocol](WIRE_PROTOCOL.md) · [Contributing](CONTRIBUTING.md) |
+
+## 🤝 Contributing
+
+Share use cases, report bugs through [Issues](https://github.com/zed123214/agent-runtime-kit/issues), or open a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks.
+
+If KitAgent helps with your work, give it a **Star** and share what you built with it.
+
+## 📄 License
+
+[MIT](LICENSE)
