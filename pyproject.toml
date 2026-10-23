@@ -17,6 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "websockets>=13,<17",
+]
 kubernetes = [
     "kubernetes-asyncio>=33.3,<37",
     "aiohttp>=3.14.0,<4",
@@ -37,6 +42,7 @@ agentrt = "agent_runtime.cli.main:main"
 agentrt-core = "agent_runtime.core.app:run"
 agentrt-tui = "agent_runtime.tui.__main__:main"
 agentrt-sandbox = "agent_runtime.sandbox_server.__main__:main"
+agentrt-web = "agent_runtime.web.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_runtime"]

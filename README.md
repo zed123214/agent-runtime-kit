@@ -6,6 +6,16 @@ Agent Runtime Kit 将模型调用、工具执行和会话状态组织成一套�
 
 中文 | [English](README.en.md)
 
+## 浏览器工作台
+
+通过本机浏览器提交任务、观察工具调用、处理人工审批并导出运行报告。Web v0.1 支持 **Loop + Local**；网关持有 Core 连接，页面刷新后可继续观察原任务。使用方法见[工作台说明](docs/web-workbench.md)。
+
+![KitAgent 浏览器工作台与运行报告](docs/assets/web-workbench-overview.png)
+
+*离线演示采用脚本化 Provider，Core、TCP、权限和工具链均真实运行。图中的 Web 模式不包含 Graph 持久恢复或 Kubernetes 沙箱。*
+
+[查看审批界面](docs/assets/web-workbench-approval.png) · [运行离线演示](docs/web-workbench.md#无-api-key-的真实工具演示)
+
 [![CI](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063)](https://docs.pydantic.dev/)
@@ -87,7 +97,7 @@ Pod UID 或 Worker 代际改变后，旧 Session 会收到 `workspace_lost`，�
 
 ## 验证结果
 
-以下为 **2026-09-09 的已记录验收结果**。Kubernetes 实验使用单节点 kind、Kubernetes v1.36.4、Cilium 1.20.1 和离线 Provider；镜像已预先导入。测试范围、失败修复记录和复现脚本见 [M2 验收报告](docs/sandbox-m2-validation.md)。
+以下为 **2026-09-09 的已记录验收结果**。Kubernetes 实验使用单节点 kind、Kubernetes v1.36.4、Cilium 1.20.1 和离线 Provider；镜像已预先导入。部署条件与验收入口见 [Kubernetes Sandbox](docs/kubernetes-sandbox.md)。
 
 | 验证项 | 结果 | 测试口径 |
 | --- | --- | --- |
@@ -99,7 +109,7 @@ Pod UID 或 Worker 代际改变后，旧 Session 会收到 `workspace_lost`，�
 | Ready 后执行开销 | **p95 19.26 ms** | 100 个样本；Core 总耗时减去 Worker 报告的命令耗时。 |
 | 网络与访问边界 | **网络探测 21/21；RBAC / 准入 18/18** | 实测 Core 允许、错误来源入口和 Sandbox 出站拒绝，以及越权操作拒绝。 |
 
-资源实验还验证了 CPU 节流、OOM、存储驱逐、命令超时和 Core 异常退出后的孤儿回收。p95 使用 nearest-rank；上述数据描述固定配置下的运行时与沙箱行为，真实模型延迟、多节点和生产负载尚未测试。原始样本保存在本机忽略目录，仓库提供验收报告与复现入口。
+资源实验还验证了 CPU 节流、OOM、存储驱逐、命令超时和 Core 异常退出后的孤儿回收。p95 使用 nearest-rank；上述数据描述固定配置下的运行时与沙箱行为，真实模型延迟、多节点和生产负载尚未测试。原始样本保存在本机忽略目录，仓库提供验收脚本与复现入口。
 
 ## 快速开始
 

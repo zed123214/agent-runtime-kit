@@ -101,6 +101,255 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
   }
 }
 ```
+### CoreDescribeCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "core.describe",
+      "default": "core.describe",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "title": "CoreDescribeCommand",
+  "type": "object"
+}
+```
+### CoreDescribeResult
+
+| Field | Type | Required |
+|---|---|---|
+| `server_version` | `string` | yes |
+| `web_protocol_version` | `integer` | no |
+| `engine` | `string` | yes |
+| `checkpoint_backend` | `string` | yes |
+| `sandbox_backend` | `string` | yes |
+| `durable_chat` | `boolean` | yes |
+| `model` | `string` | yes |
+| `working_directory` | `string` | yes |
+| `permission_modes` | `array` | no |
+
+```json
+{
+  "properties": {
+    "server_version": {
+      "title": "Server Version",
+      "type": "string"
+    },
+    "web_protocol_version": {
+      "default": 1,
+      "title": "Web Protocol Version",
+      "type": "integer"
+    },
+    "engine": {
+      "title": "Engine",
+      "type": "string"
+    },
+    "checkpoint_backend": {
+      "title": "Checkpoint Backend",
+      "type": "string"
+    },
+    "sandbox_backend": {
+      "title": "Sandbox Backend",
+      "type": "string"
+    },
+    "durable_chat": {
+      "title": "Durable Chat",
+      "type": "boolean"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "working_directory": {
+      "title": "Working Directory",
+      "type": "string"
+    },
+    "permission_modes": {
+      "items": {
+        "enum": [
+          "ask",
+          "read_only",
+          "auto"
+        ],
+        "type": "string"
+      },
+      "title": "Permission Modes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "server_version",
+    "engine",
+    "checkpoint_backend",
+    "sandbox_backend",
+    "durable_chat",
+    "model",
+    "working_directory"
+  ],
+  "title": "CoreDescribeResult",
+  "type": "object"
+}
+```
+### RunGetResultCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+| `run_id` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "run.get_result",
+      "default": "run.get_result",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "run_id"
+  ],
+  "title": "RunGetResultCommand",
+  "type": "object"
+}
+```
+### RunGetResultResult
+
+| Field | Type | Required |
+|---|---|---|
+| `session_id` | `string` | yes |
+| `run_id` | `string` | yes |
+| `commit_state` | `string` | yes |
+| `result_revision` | `string | null` | no |
+| `transcript_ref` | `string | null` | no |
+| `status` | `string | null` | no |
+| `reason` | `string | null` | no |
+| `final_answer` | `string | null` | no |
+| `no_final_answer` | `boolean` | no |
+| `truncated` | `boolean` | no |
+
+```json
+{
+  "properties": {
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "commit_state": {
+      "enum": [
+        "pending",
+        "committed",
+        "unavailable"
+      ],
+      "title": "Commit State",
+      "type": "string"
+    },
+    "result_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Revision"
+    },
+    "transcript_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Transcript Ref"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "enum": [
+            "success",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "final_answer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Final Answer"
+    },
+    "no_final_answer": {
+      "default": true,
+      "title": "No Final Answer",
+      "type": "boolean"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "run_id",
+    "commit_state"
+  ],
+  "title": "RunGetResultResult",
+  "type": "object"
+}
+```
 
 ### AgentRunCommand
 
@@ -544,6 +793,143 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
     "messages"
   ],
   "title": "SessionGetHistoryResult",
+  "type": "object"
+}
+```
+
+### SessionGetPermissionsCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "session.get_permissions",
+      "default": "session.get_permissions",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id"
+  ],
+  "title": "SessionGetPermissionsCommand",
+  "type": "object"
+}
+```
+
+### SessionSetPermissionsCommand
+
+| Field | Type | Required |
+|---|---|---|
+| `type` | `string` | no |
+| `session_id` | `string` | yes |
+| `mode` | `string` | yes |
+| `expected_revision` | `integer` | yes |
+| `revoke_tool` | `string | null` | no |
+| `reset_grants` | `boolean` | no |
+
+```json
+{
+  "properties": {
+    "type": {
+      "const": "session.set_permissions",
+      "default": "session.set_permissions",
+      "title": "Type",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "ask",
+        "read_only",
+        "auto"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "revoke_tool": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoke Tool"
+    },
+    "reset_grants": {
+      "default": false,
+      "title": "Reset Grants",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "mode",
+    "expected_revision"
+  ],
+  "title": "SessionSetPermissionsCommand",
+  "type": "object"
+}
+```
+
+### SessionPermissions
+
+| Field | Type | Required |
+|---|---|---|
+| `mode` | `string` | no |
+| `allowed_tools` | `array` | no |
+| `revision` | `integer` | no |
+
+```json
+{
+  "description": "Ephemeral, owner-controlled permissions; never persisted as global policy.",
+  "properties": {
+    "mode": {
+      "default": "ask",
+      "enum": [
+        "ask",
+        "read_only",
+        "auto"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "allowed_tools": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Tools",
+      "type": "array"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    }
+  },
+  "title": "SessionPermissions",
   "type": "object"
 }
 ```
@@ -1073,14 +1459,58 @@ All commands are sent as JSON-RPC 2.0 requests. The `type` field inside `params`
 | Field | Type | Required |
 |---|---|---|
 | `ok` | `boolean` | no |
+| `permissions` | `? | null` | no |
 
 ```json
 {
+  "$defs": {
+    "SessionPermissions": {
+      "description": "Ephemeral, owner-controlled permissions; never persisted as global policy.",
+      "properties": {
+        "mode": {
+          "default": "ask",
+          "enum": [
+            "ask",
+            "read_only",
+            "auto"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Tools",
+          "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "title": "SessionPermissions",
+      "type": "object"
+    }
+  },
   "properties": {
     "ok": {
       "default": true,
       "title": "Ok",
       "type": "boolean"
+    },
+    "permissions": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionPermissions"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "title": "PermissionRespondResult",

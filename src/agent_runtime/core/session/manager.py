@@ -18,6 +18,7 @@ from agent_runtime.core.bus.events import (
 from agent_runtime.core.events.bus import EventBus
 from agent_runtime.core.runs import new_run_id
 from agent_runtime.core.session.model import Session, SessionMode
+from agent_runtime.core.session.result import RunGetResultResult
 from agent_runtime.core.session.store import SessionStore, TranscriptStoreError
 from agent_runtime.core.skills.loader import SkillLoader
 
@@ -69,11 +70,17 @@ class SessionManager:
         self._close_pending_events: set[str] = set()
         self._shutting_down = False
         self._skill_loader = SkillLoader()
+        # P0 result snapshots are process-local; only the active/recent turns are retained.
+        self._web_results: dict[str, dict[str, RunGetResultResult]] = {}
 
     def begin_close(self, sid: str) -> None:
         """Stop admitting turns before cancellation yields to another request."""
 
         self._closing.add(sid)
+
+    def is_closing(self, sid: str) -> bool:
+        """Whether new execution or permission changes must be refused."""
+        return self._shutting_down or sid in self._closing
 
     def begin_shutdown(self) -> None:
         """Reject both new sessions and new work before transport shutdown."""
@@ -206,6 +213,12 @@ class SessionManager:
                     status="running",
                 )
             session.run_ids.append(run_id)
+            results = self._web_results.setdefault(sid, {})
+            while len(results) >= 2:
+                results.pop(next(iter(results)))
+            results[run_id] = RunGetResultResult(
+                session_id=sid, run_id=run_id, commit_state="pending"
+            )
             session.active_run_id = run_id
             session.updated_at = _now()
             self._store.write_meta(session)
@@ -253,6 +266,21 @@ class SessionManager:
             else:
                 evict = False
                 session.active_run_id = None
+                commit = self._store.transcript_commit(sid, run_id)
+                answer_bytes = result.result.encode("utf-8")
+                answer = answer_bytes[:65536].decode("utf-8", errors="ignore")
+                results[run_id] = RunGetResultResult(
+                    session_id=sid,
+                    run_id=run_id,
+                    commit_state="committed",
+                    result_revision=uuid.uuid4().hex,
+                    transcript_ref=f"{run_id}:{commit.transcript_commit_hash}",
+                    status=result.status,
+                    reason=result.reason,
+                    final_answer=answer or None,
+                    no_final_answer=not bool(answer),
+                    truncated=len(answer_bytes) > 65536,
+                )
             if not evict and session.mode == "one_shot":
                 session.status = "closed"
                 await self._bus.publish(SessionClosedEvent(session_id=sid, ts=session.updated_at))
@@ -316,6 +344,14 @@ class SessionManager:
     def evict(self, sid: str) -> None:
         self._sessions.pop(sid, None)
         self._locks.pop(sid, None)
+        self._web_results.pop(sid, None)
+
+    def get_run_result(self, sid: str, run_id: str) -> RunGetResultResult:
+        self._get_session(sid)
+        result = self._web_results.get(sid, {}).get(run_id)
+        if result is None:
+            return RunGetResultResult(session_id=sid, run_id=run_id, commit_state="unavailable")
+        return result.model_copy(deep=True)
 
     async def resume_run(
         self,

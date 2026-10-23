@@ -11,12 +11,16 @@ from pathlib import Path
 from agent_runtime.core.bus.commands import (
     AgentRunCommand,
     AgentRunResult,
+    CoreDescribeCommand,
+    CoreDescribeResult,
     EventSubscribeCommand,
     EventSubscribeResult,
     PermissionRespondCommand,
     PermissionRespondResult,
     PingCommand,
     PongResult,
+    RunGetResultCommand,
+    RunGetResultResult,
     RunGetStateCommand,
     RunGetStateResult,
     SessionCloseCommand,
@@ -27,10 +31,12 @@ from agent_runtime.core.bus.commands import (
     SessionCreateResult,
     SessionGetHistoryCommand,
     SessionGetHistoryResult,
+    SessionGetPermissionsCommand,
     SessionResumeCommand,
     SessionResumeResult,
     SessionSendMessageCommand,
     SessionSendMessageResult,
+    SessionSetPermissionsCommand,
 )
 from agent_runtime.core.bus.envelope import EventPushEnvelope
 from agent_runtime.core.bus.events import (
@@ -66,6 +72,7 @@ from agent_runtime.core.bus.events import (
     ToolCallFinishedEvent,
     ToolCallStartedEvent,
 )
+from agent_runtime.core.permissions.policy import SessionPermissions
 
 _OUTPUT_PATH = Path(__file__).parent.parent / "WIRE_PROTOCOL.md"
 
@@ -294,6 +301,10 @@ def generate() -> str:
         _model_section("PingCommand", PingCommand, ping_req_example),
         "\n",
         _model_section("PongResult", PongResult, pong_resp_example),
+        _model_section("CoreDescribeCommand", CoreDescribeCommand),
+        _model_section("CoreDescribeResult", CoreDescribeResult),
+        _model_section("RunGetResultCommand", RunGetResultCommand),
+        _model_section("RunGetResultResult", RunGetResultResult),
         "\n",
         _model_section("AgentRunCommand", AgentRunCommand, agent_run_req_example),
         "\n",
@@ -318,6 +329,12 @@ def generate() -> str:
         _model_section("SessionGetHistoryCommand", SessionGetHistoryCommand),
         "\n",
         _model_section("SessionGetHistoryResult", SessionGetHistoryResult),
+        "\n",
+        _model_section("SessionGetPermissionsCommand", SessionGetPermissionsCommand),
+        "\n",
+        _model_section("SessionSetPermissionsCommand", SessionSetPermissionsCommand),
+        "\n",
+        _model_section("SessionPermissions", SessionPermissions),
         "\n",
         _model_section("SessionCloseCommand", SessionCloseCommand),
         "\n",

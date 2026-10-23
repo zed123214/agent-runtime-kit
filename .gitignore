@@ -17,3 +17,28 @@ build/
 *.log
 workspace/
 artifacts/sandbox-validation/
+node_modules/
+*.tsbuildinfo
+src/agent_runtime/web/static/
+frontend/test-results/
+frontend/playwright-report/
+artifacts/web-validation/
+
+# Local configuration, tooling, and generated evidence
+.env.*
+!.env.example
+.cursor/
+.codegraph/
+artifacts/
+docs/assets/*-metrics.json
+
+# Internal planning, handoffs, reviews, and career notes
+*prd*.md
+*PRD*.md
+docs/internal/
+docs/*-implementation.md
+docs/*-handoff.md
+docs/*-validation.md
+docs/*-review.md
+docs/interview-prep.md
+docs/project-highlights.md

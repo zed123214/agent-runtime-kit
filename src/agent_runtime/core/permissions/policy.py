@@ -3,7 +3,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+PermissionMode = Literal["ask", "read_only", "auto"]
+
+
+class SessionPermissions(BaseModel):
+    """Ephemeral, owner-controlled permissions; never persisted as global policy."""
+
+    mode: PermissionMode = "ask"
+    allowed_tools: list[str] = Field(default_factory=list)
+    revision: int = Field(default=0, ge=0)
 
 
 class PermissionDecision(StrEnum):

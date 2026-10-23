@@ -21,11 +21,14 @@ import agent_runtime
 from agent_runtime.core.bus.commands import (
     AgentRunCommand,
     AgentRunResult,
+    CoreDescribeResult,
     EventSubscribeCommand,
     EventSubscribeResult,
     PermissionRespondCommand,
     PermissionRespondResult,
     PongResult,
+    RunGetResultCommand,
+    RunGetResultResult,
     RunGetStateCommand,
     RunGetStateResult,
     SessionCloseCommand,
@@ -36,10 +39,12 @@ from agent_runtime.core.bus.commands import (
     SessionCreateResult,
     SessionGetHistoryCommand,
     SessionGetHistoryResult,
+    SessionGetPermissionsCommand,
     SessionResumeCommand,
     SessionResumeResult,
     SessionSendMessageCommand,
     SessionSendMessageResult,
+    SessionSetPermissionsCommand,
 )
 from agent_runtime.core.bus.envelope import EventPushEnvelope, HandlerError
 from agent_runtime.core.bus.events import RunFinishedEvent, RunStartedEvent
@@ -65,6 +70,7 @@ from agent_runtime.core.llm.provider import AnthropicProvider
 from agent_runtime.core.logging_setup import setup_logging
 from agent_runtime.core.mcp.server import McpServerManager
 from agent_runtime.core.permissions.manager import PermissionManager
+from agent_runtime.core.permissions.policy import SessionPermissions
 from agent_runtime.core.permissions.storage import load_policy_file
 from agent_runtime.core.runner import AgentRunner
 from agent_runtime.core.runs import RUNS_DIR, new_run_id
@@ -174,6 +180,28 @@ class CoreApp:
         )
 
     # 将 EventBus 事件写入 trace（作为 EventBus 订阅者）
+    async def _describe_handler(self, params: dict[str, Any]) -> CoreDescribeResult:
+        assert self._config is not None
+        config = self._config
+        return CoreDescribeResult(
+            server_version=agent_runtime.__version__,
+            engine=config.agent.engine,
+            checkpoint_backend=config.graph.checkpoint_backend,
+            sandbox_backend=config.sandbox.backend,
+            durable_chat=self._durable_enabled,
+            model=config.llm.default_model,
+            working_directory=str(Path.cwd()),
+            permission_modes=["ask", "read_only", "auto"]
+            if config.agent.engine == "loop" and config.sandbox.backend == "local"
+            else [],
+        )
+
+    async def _run_get_result_handler(self, params: dict[str, Any]) -> RunGetResultResult:
+        assert self._sessions is not None
+        cmd = RunGetResultCommand.model_validate(params)
+        self._require_current_connection_owns(cmd.session_id)
+        return self._sessions.get_run_result(cmd.session_id, cmd.run_id)
+
     async def _trace_event_handler(self, event: BaseModel) -> None:
         assert self._trace is not None
         event_dict = redact_sensitive_fields(event.model_dump())
@@ -259,6 +287,8 @@ class CoreApp:
             raise asyncio.CancelledError()
 
     async def _release_session_resources(self, session_id: str) -> None:
+        if self._permission_manager is not None:
+            self._permission_manager.cancel_session(session_id, reason="session_closed")
         try:
             if self._recovery_store is not None:
                 await self._recovery_store.delete_capability(session_id)
@@ -850,6 +880,41 @@ class CoreApp:
             resumable=state.resumable,
         )
 
+    def _require_session_permissions(self, session_id: str) -> PermissionManager:
+        self._require_current_connection_owns(session_id)
+        assert self._sessions is not None
+        session = self._sessions.hydrate(session_id)
+        if session.status == "closed" or self._sessions.is_closing(session_id):
+            raise HandlerError(SESSION_NOT_FOUND, "session not found")
+        if (
+            self._config is None
+            or self._config.agent.engine != "loop"
+            or self._config.sandbox.backend != "local"
+            or session.durable
+        ):
+            raise HandlerError(-32602, "session permissions require Loop + Local")
+        assert self._permission_manager is not None
+        return self._permission_manager
+
+    async def _session_get_permissions_handler(self, params: dict[str, Any]) -> SessionPermissions:
+        cmd = SessionGetPermissionsCommand.model_validate(params)
+        manager = self._require_session_permissions(cmd.session_id)
+        return manager.session_permissions(cmd.session_id)
+
+    async def _session_set_permissions_handler(self, params: dict[str, Any]) -> SessionPermissions:
+        cmd = SessionSetPermissionsCommand.model_validate(params)
+        manager = self._require_session_permissions(cmd.session_id)
+        try:
+            return manager.configure_session(
+                cmd.session_id,
+                mode=cmd.mode,
+                expected_revision=cmd.expected_revision,
+                revoke_tool=cmd.revoke_tool,
+                reset_grants=cmd.reset_grants,
+            )
+        except ValueError as exc:
+            raise HandlerError(-32602, str(exc)) from exc
+
     # 接收客户端权限审批响应，resolve 对应挂起的 Future
     async def _permission_respond_handler(self, params: dict[str, Any]) -> PermissionRespondResult:
         cmd = PermissionRespondCommand.model_validate(params)
@@ -861,6 +926,10 @@ class CoreApp:
         if self._permission_manager is None:
             logger.error("permission.respond: PermissionManager not initialized")
             return PermissionRespondResult(ok=False)
+        if cmd.decision == "allow_session":
+            if cmd.session_id is None or cmd.run_id is None:
+                return PermissionRespondResult(ok=False)
+            self._require_session_permissions(cmd.session_id)
         writer = get_connection_writer()
         authorized_session_ids = (
             self._broadcaster.session_ids_for(writer)
@@ -883,7 +952,12 @@ class CoreApp:
             session_id=cmd.session_id,
             run_id=cmd.run_id,
         )
-        return PermissionRespondResult(ok=ok)
+        return PermissionRespondResult(
+            ok=ok,
+            permissions=self._permission_manager.session_permissions(cmd.session_id)
+            if ok and cmd.session_id is not None
+            else None,
+        )
 
     async def _respond_durable_permission(
         self,
@@ -982,6 +1056,8 @@ class CoreApp:
         cmd = SessionCloseCommand.model_validate(params)
         self._require_current_connection_owns(cmd.session_id)
         self._sessions.begin_close(cmd.session_id)
+        if self._permission_manager is not None:
+            self._permission_manager.cancel_session(cmd.session_id, reason="session_closed")
         await self._cancel_session_run_tasks(cmd.session_id)
         self._sessions.hydrate(cmd.session_id)
         try:
@@ -1314,6 +1390,8 @@ class CoreApp:
         )
         self._server = server
         server.register("core.ping", self._ping_handler)
+        server.register("core.describe", self._describe_handler)
+        server.register("run.get_result", self._run_get_result_handler)
         server.register("agent.run", self._agent_run_handler)
         server.register("event.subscribe", self._subscribe_handler)
         server.register("session.create", self._session_create_handler)
@@ -1323,6 +1401,8 @@ class CoreApp:
         server.register("session.resume", self._session_resume_handler)
         server.register("run.get_state", self._run_get_state_handler)
         server.register("permission.respond", self._permission_respond_handler)
+        server.register("session.get_permissions", self._session_get_permissions_handler)
+        server.register("session.set_permissions", self._session_set_permissions_handler)
         server.register("session.compact", self._session_compact_handler)
 
         addr = await server.start()

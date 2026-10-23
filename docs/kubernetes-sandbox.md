@@ -1,7 +1,6 @@
 # Kubernetes Sandbox（M1 / M2）
 
-状态（2026-09-09）：M1 真实集群 E2E 已通过。M2 的安全、资源、性能与回收原始证据和最终状态
-见 [M2 验收报告](sandbox-m2-validation.md)。[M2 交接记录](sandbox-m2-handoff.md)保留开工前的历史基线。
+本指南说明 Kubernetes 后端的部署条件、配置、认证边界与验收脚本入口。
 Local 仍为默认，保留宿主 cwd、文件和现有恢复语义；
 Kubernetes 不会自动回退 Local。
 

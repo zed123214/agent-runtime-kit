@@ -136,10 +136,8 @@ and an authenticated command/text-file Worker. It requires one in-cluster Core,
 digest-pinned images, a stable deployment scope and ownership key, and a validated
 NetworkPolicy CNI. Missing dependencies/configuration fail before listening.
 Kubernetes durable sessions (including automatic durable chat) require M3;
-Local recovery remains available. M1 cluster E2E has passed; M2 receipts, measured
-results, and reproduction scripts are in the [validation report](docs/sandbox-m2-validation.md).
-See [deployment/configuration](docs/kubernetes-sandbox.md)
-and the [M1 delivery record](docs/sandbox-m1-implementation.md).
+Local recovery remains available. See the [Kubernetes Sandbox guide](docs/kubernetes-sandbox.md)
+for deployment, configuration, and validation commands.
 
 ```bash
 cp .env.example .env
@@ -238,7 +236,7 @@ agent-runtime-kit/
 |   |-- tool-permissions.md
 |   |-- session-memory.md
 |   |-- skills-subagents-mcp.md
-|   `-- project-highlights.md
+|   `-- web-workbench.md
 |-- examples/
 |   |-- graph_offline_demo.py
 |   |-- durable_recovery_demo.py
@@ -323,7 +321,7 @@ uv run python scripts/generate_wire_protocol.py
 - [Tool Permissions](docs/tool-permissions.md)
 - [Session Memory](docs/session-memory.md)
 - [Skills, Subagents, and MCP](docs/skills-subagents-mcp.md)
-- [Project Highlights](docs/project-highlights.md)
+- [Browser Workbench](docs/web-workbench.md)
 - [Runbook](RUNBOOK.md)
 - [Wire Protocol](WIRE_PROTOCOL.md)
 

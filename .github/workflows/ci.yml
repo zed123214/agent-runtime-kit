@@ -5,6 +5,26 @@ on:
   pull_request:
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: uv python install 3.12
+      - run: uv sync --frozen --extra web --dev
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - run: npm test --prefix frontend
+      - run: uv run --extra web pytest tests/unit/test_web_gateway.py tests/unit/test_web_projection.py tests/unit/test_web_run_result.py tests/unit/test_web_session.py tests/unit/test_session_permissions.py -q
+      - run: npx --prefix frontend playwright install --with-deps chromium
+      - name: Browser acceptance against real Core
+        run: AGENTRT_TEST_PYTHON="$PWD/.venv/bin/python" npm run test:e2e --prefix frontend
+
   base:
     runs-on: ubuntu-latest
 

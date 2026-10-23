@@ -19,12 +19,41 @@ a common tool and permission path.
 The permission model supports one-shot and persistent decisions:
 
 - `allow_once`
+- `allow_session` (Loop + Local, this session and tool only; in memory)
 - `always_allow`
 - `deny_once`
 - `always_deny`
 
 This makes risky local actions visible at runtime instead of relying only on
 prompt-level instructions.
+
+## Session modes (Loop + Local)
+
+`core.describe.permission_modes` advertises `ask`, `read_only`, and `auto`.
+The owner connection reads `session.get_permissions` and changes
+`session.set_permissions` with the last `expected_revision`. Changes can revoke
+one tool or reset all session grants. Revision conflicts fail without mutation;
+closed, closing, foreign, and durable sessions cannot change modes.
+
+`read_only` permits only `read_file` and `list_dir`, including when a legacy
+allow policy exists. It denies Shell and extension tools rather than guessing
+which commands are read-only. `auto` authorizes tools for that session, including
+pending requests and outside-directory commands. Explicit deny patterns,
+tool defaults of DENY, and persistent deny decisions remain effective.
+
+`allow_session` is bound to an actual pending request and grants that tool for
+all arguments and paths in the owning session; it also resolves already waiting
+calls of that tool. It never writes global policy and is removed on close or
+disconnect. Legacy `always_allow` behavior is unchanged, including its forced
+ASK heuristic for outside-cwd commands. Session grants intentionally cover those
+commands, as their UI explicitly describes host-wide access. Neither session
+mode nor the heuristic is an OS filesystem sandbox.
+
+Automatic invocations retain permission events with `session_allow` or
+`session_auto`; the initial human decision records `allow_session`. Read-only
+denials record `read_only`. Changes affect calls not yet authorized, not effects
+already in flight. Mode mutations are logged by Core and mirrored into gateway
+snapshots only from Core responses.
 
 ## Client Isolation
 

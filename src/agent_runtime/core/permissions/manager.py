@@ -13,6 +13,8 @@ from typing import Any
 from agent_runtime.core.permissions.policy import (
     DEFAULT_POLICIES,
     PermissionDecision,
+    PermissionMode,
+    SessionPermissions,
     ToolPolicy,
     matches_outside_cwd,
     param_preview,
@@ -32,6 +34,7 @@ class _PendingRequest:
     session_id: str
     run_id: str
     tool_name: str
+    params: dict[str, Any]
 
 
 # 管理工具调用权限：策略评估、用户审批挂起、session 级和持久化 always 缓存、超时
@@ -48,6 +51,7 @@ class PermissionManager:
         self._pending: dict[tuple[str, str, str], _PendingRequest] = {}
         # (session_id, tool_name) → "allow" | "deny"（session 内存，重启丢失）
         self._session_always: dict[tuple[str, str], str] = {}
+        self._session_permissions: dict[str, SessionPermissions] = {}
         # tool_name → "allow" | "deny"（持久化，从 policy_file 加载）
         self._policy_file = policy_file
         self._persistent_always: dict[str, str] = (
@@ -55,6 +59,53 @@ class PermissionManager:
         )
         # 0 表示不超时
         self._timeout_s = timeout_s
+
+    def session_permissions(self, session_id: str) -> SessionPermissions:
+        return self._session_permissions.get(session_id, SessionPermissions()).model_copy(deep=True)
+
+    def configure_session(
+        self,
+        session_id: str,
+        *,
+        mode: PermissionMode,
+        expected_revision: int,
+        revoke_tool: str | None = None,
+        reset_grants: bool = False,
+    ) -> SessionPermissions:
+        """Apply a revision-checked change and reconsider calls still awaiting consent."""
+        current = self.session_permissions(session_id)
+        if current.revision != expected_revision:
+            raise ValueError("session permissions changed; refresh before retrying")
+        grants = (
+            []
+            if reset_grants or mode != current.mode or mode == "read_only"
+            else current.allowed_tools
+        )
+        state = SessionPermissions(
+            mode=mode,
+            allowed_tools=[tool for tool in grants if tool != revoke_tool],
+            revision=current.revision + 1,
+        )
+        self._session_permissions[session_id] = state
+        logger.info(
+            "session permissions changed session=%s mode=%s revision=%s",
+            session_id,
+            mode,
+            state.revision,
+        )
+        self._recheck_pending(session_id)
+        return state.model_copy(deep=True)
+
+    def _recheck_pending(self, session_id: str) -> None:
+        for key, request in list(self._pending.items()):
+            if request.session_id != session_id or request.future.done():
+                continue
+            allowed, decision = self._evaluate_without_prompt(
+                request.tool_name, request.params, session_id
+            )
+            if allowed is not None:
+                self._pending.pop(key)
+                request.future.set_result(decision)
 
     # 对工具名 + 参数执行 4 层静态评估，不挂起
     def evaluate(self, tool_name: str, params: dict[str, Any]) -> PermissionDecision:
@@ -96,7 +147,27 @@ class PermissionManager:
                     logger.debug("permission: deny_pattern hit tool=%s", tool_name)
                     return False, "auto_deny"
 
-        # Tier 2: OUTSIDE_CWD_HEURISTICS（bash only，强制 ASK，不可被任何缓存绕过）
+        # Explicit denials also constrain the new session-wide permissions.
+        permissions = self._session_permissions.get(session_id)
+        if permissions is not None:
+            if (
+                (policy is not None and policy.default == PermissionDecision.DENY)
+                or self._session_always.get((session_id, tool_name)) == "deny"
+                or self._persistent_always.get(tool_name) == "deny"
+            ):
+                return False, "auto_deny"
+            if permissions.mode == "read_only":
+                return (
+                    (True, "auto_allow")
+                    if tool_name in {"read_file", "list_dir"}
+                    else (False, "read_only")
+                )
+            if permissions.mode == "auto":
+                return True, "session_auto"
+            if tool_name in permissions.allowed_tools:
+                return True, "session_allow"
+
+        # Legacy always rules still cannot bypass the outside-cwd ASK heuristic.
         outside_cwd = bool(command and matches_outside_cwd(command))
         if outside_cwd:
             return None, "ask"
@@ -159,6 +230,7 @@ class PermissionManager:
             session_id=session_id,
             run_id=run_id,
             tool_name=tool_name,
+            params=dict(params),
         )
         self._pending[pending_key] = request
 
@@ -185,6 +257,8 @@ class PermissionManager:
             if self._pending.get(pending_key) is request:
                 self._pending.pop(pending_key, None)
 
+        # Session grants are installed synchronously in respond(), never after a
+        # later revoke/close has already removed them.
         allowed = self._apply_response(raw, session_id, tool_name)
         return allowed, raw
 
@@ -198,6 +272,14 @@ class PermissionManager:
         session_id: str | None = None,
         run_id: str | None = None,
     ) -> bool:
+        if decision not in {
+            "allow_once",
+            "allow_session",
+            "always_allow",
+            "deny_once",
+            "always_deny",
+        }:
+            return False
         if (session_id is None) != (run_id is None):
             logger.warning("permission.respond: session_id and run_id must be provided together")
             return False
@@ -239,7 +321,15 @@ class PermissionManager:
                 tool_use_id,
             )
             return False
+        if decision == "allow_session":
+            state = self.session_permissions(req.session_id)
+            if req.tool_name not in state.allowed_tools:
+                state.allowed_tools = sorted([*state.allowed_tools, req.tool_name])
+                state.revision += 1
+                self._session_permissions[req.session_id] = state
         req.future.set_result(decision)
+        if decision == "allow_session":
+            self._recheck_pending(req.session_id)
         return True
 
     # 应用审批决策，更新 session + persistent 缓存，返回是否放行
@@ -247,7 +337,14 @@ class PermissionManager:
         return self._apply_response(decision, session_id, tool_name)
 
     def _apply_response(self, decision: str, session_id: str, tool_name: str) -> bool:
-        allow = decision in ("allow_once", "always_allow")
+        allow = decision in (
+            "allow_once",
+            "always_allow",
+            "allow_session",
+            "auto_allow",
+            "session_allow",
+            "session_auto",
+        )
         if decision == "always_allow":
             self._session_always[(session_id, tool_name)] = "allow"
             self._persistent_always[tool_name] = "allow"
@@ -290,6 +387,9 @@ class PermissionManager:
 
     # 客户端断连时拒绝该 session 所有待审批请求，防止 Future 永久挂起
     def cancel_session(self, session_id: str, reason: str = "client_disconnected") -> None:
+        self._session_permissions.pop(session_id, None)
+        for cached in [key for key in self._session_always if key[0] == session_id]:
+            self._session_always.pop(cached)
         to_cancel = [key for key, req in self._pending.items() if req.session_id == session_id]
         for key in to_cancel:
             req = self._pending.pop(key)

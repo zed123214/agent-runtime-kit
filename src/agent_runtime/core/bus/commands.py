@@ -4,7 +4,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Discriminator, Field
 
+from agent_runtime.core.permissions.policy import PermissionMode, SessionPermissions
 from agent_runtime.core.session.model import SessionMode, SessionStatus
+from agent_runtime.core.session.result import RunGetResultResult as RunGetResultResult
 
 
 class PingCommand(BaseModel):
@@ -16,6 +18,28 @@ class PongResult(BaseModel):
     server_version: str
     uptime_ms: int
     received_at: str  # ISO 8601
+
+
+class CoreDescribeCommand(BaseModel):
+    type: Literal["core.describe"] = "core.describe"
+
+
+class CoreDescribeResult(BaseModel):
+    server_version: str
+    web_protocol_version: int = 1
+    engine: str
+    checkpoint_backend: str
+    sandbox_backend: str
+    durable_chat: bool
+    model: str
+    working_directory: str
+    permission_modes: list[PermissionMode] = Field(default_factory=list)
+
+
+class RunGetResultCommand(BaseModel):
+    type: Literal["run.get_result"] = "run.get_result"
+    session_id: str
+    run_id: str
 
 
 class AgentRunCommand(BaseModel):
@@ -116,6 +140,20 @@ class RunGetStateResult(BaseModel):
     resumable: bool
 
 
+class SessionGetPermissionsCommand(BaseModel):
+    type: Literal["session.get_permissions"] = "session.get_permissions"
+    session_id: str
+
+
+class SessionSetPermissionsCommand(BaseModel):
+    type: Literal["session.set_permissions"] = "session.set_permissions"
+    session_id: str
+    mode: PermissionMode
+    expected_revision: int = Field(ge=0)
+    revoke_tool: str | None = Field(default=None, max_length=200)
+    reset_grants: bool = False
+
+
 class PermissionRespondCommand(BaseModel):
     type: Literal["permission.respond"] = "permission.respond"
     tool_use_id: str
@@ -123,12 +161,13 @@ class PermissionRespondCommand(BaseModel):
     run_id: str | None = None
     interrupt_id: str | None = None
     expected_revision: str | None = None
-    # "allow_once" | "always_allow" | "deny_once" | "always_deny"
+    # "allow_once" | "allow_session" | "always_allow" | "deny_once" | "always_deny"
     decision: str
 
 
 class PermissionRespondResult(BaseModel):
     ok: bool = True
+    permissions: SessionPermissions | None = None
 
 
 class SessionCompactCommand(BaseModel):
@@ -145,6 +184,8 @@ class SessionCompactResult(BaseModel):
 # 根据 type 字段决定命令类型的判别联合
 Command = Annotated[
     PingCommand
+    | CoreDescribeCommand
+    | RunGetResultCommand
     | AgentRunCommand
     | EventSubscribeCommand
     | SessionCreateCommand
@@ -154,6 +195,8 @@ Command = Annotated[
     | SessionResumeCommand
     | RunGetStateCommand
     | PermissionRespondCommand
+    | SessionGetPermissionsCommand
+    | SessionSetPermissionsCommand
     | SessionCompactCommand,
     Discriminator("type"),
 ]
