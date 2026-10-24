@@ -33,11 +33,11 @@ A persistent **Core** manages execution and sessions, with **Web / CLI / TUI** i
 
 **From a task description to results you can inspect and export.**
 
-![KitAgent workbench: sessions on the left, conversation in the center, and tool records and the run report on the right](docs/assets/web-workbench-overview.png)
+![KitAgent 46-second demo: submit a task, approve tool calls, inspect results, and export the report](docs/assets/web-workbench-demo.gif)
 
 <p align="center">
   Sessions · Multi-turn chat · Tool timeline · Run reports<br />
-  <a href="docs/assets/web-workbench-demo.webm"><strong>▶ Watch the full demo</strong></a> · <a href="docs/web-workbench.md">Launch the workbench</a>
+  <a href="docs/assets/web-workbench-overview.png">Full-resolution screenshot</a> · <a href="https://raw.githubusercontent.com/zed123214/agent-runtime-kit/main/docs/assets/web-workbench-demo.webm">Download the full video</a> · <a href="docs/web-workbench.md">Launch the workbench</a>
 </p>
 
 For a repository check, start with:

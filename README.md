@@ -33,11 +33,11 @@ KitAgent 面向希望构建和使用 AI 自动化工具的开发者。你可以�
 
 **从一句任务描述，到可查看、可导出的执行结果。**
 
-![KitAgent 工作台：左侧管理会话，中间对话协作，右侧查看工具执行与运行报告](docs/assets/web-workbench-overview.png)
+![KitAgent 46 秒操作演示：提交任务、审批工具调用、查看执行结果与导出报告](docs/assets/web-workbench-demo.gif)
 
 <p align="center">
   会话管理 · 多轮对话 · 工具时间线 · 运行报告<br />
-  <a href="docs/assets/web-workbench-demo.webm"><strong>▶ 观看完整演示</strong></a> · <a href="docs/web-workbench.md">启动工作台</a>
+  <a href="docs/assets/web-workbench-overview.png">查看高清截图</a> · <a href="https://raw.githubusercontent.com/zed123214/agent-runtime-kit/main/docs/assets/web-workbench-demo.webm">下载完整视频</a> · <a href="docs/web-workbench.md">启动工作台</a>
 </p>
 
 以仓库检查为例：
