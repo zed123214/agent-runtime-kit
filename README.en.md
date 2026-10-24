@@ -8,7 +8,7 @@
 <p><sub>Conversational tasks · Live tool tracking · Human approval · Session memory · Kubernetes sandboxes</sub></p>
 
 <p>
-  <a href="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml"><img src="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/zed123214/kitagent/actions/workflows/ci.yml"><img src="https://github.com/zed123214/kitagent/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
   <a href="frontend/package.json"><img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" /></a>
   <a href="docs/kubernetes-sandbox.md"><img src="https://img.shields.io/badge/Kubernetes-Sandbox-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes Sandbox" /></a>
@@ -37,7 +37,7 @@ A persistent **Core** manages execution and sessions, with **Web / CLI / TUI** i
 
 <p align="center">
   Sessions · Multi-turn chat · Tool timeline · Run reports<br />
-  <a href="docs/assets/web-workbench-overview.png">Full-resolution screenshot</a> · <a href="https://raw.githubusercontent.com/zed123214/agent-runtime-kit/main/docs/assets/web-workbench-demo.webm">Download the full video</a> · <a href="docs/web-workbench.md">Launch the workbench</a>
+  <a href="docs/assets/web-workbench-overview.png">Full-resolution screenshot</a> · <a href="https://raw.githubusercontent.com/zed123214/kitagent/main/docs/assets/web-workbench-demo.webm">Download the full video</a> · <a href="docs/web-workbench.md">Launch the workbench</a>
 </p>
 
 For a repository check, start with:
@@ -141,8 +141,8 @@ Run these commands in **Bash on Linux / WSL2**. Install **Python 3.12** and [uv]
 ### 1. Install and configure the model
 
 ```bash
-git clone https://github.com/zed123214/agent-runtime-kit.git
-cd agent-runtime-kit
+git clone https://github.com/zed123214/kitagent.git
+cd kitagent
 uv sync --frozen --extra web
 cp .env.example .env
 ```
@@ -241,7 +241,7 @@ For an offline browser demo, see the [workbench guide](docs/web-workbench.md#无
 
 ## 🤝 Contributing
 
-Share use cases, report bugs through [Issues](https://github.com/zed123214/agent-runtime-kit/issues), or open a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks.
+Share use cases, report bugs through [Issues](https://github.com/zed123214/kitagent/issues), or open a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks.
 
 If KitAgent helps with your work, give it a **Star** and share what you built with it.
 

@@ -8,7 +8,7 @@
 <p><sub>对话驱动任务 · 实时工具追踪 · 人工审批 · 会话记忆 · Kubernetes 沙箱</sub></p>
 
 <p>
-  <a href="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml"><img src="https://github.com/zed123214/agent-runtime-kit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/zed123214/kitagent/actions/workflows/ci.yml"><img src="https://github.com/zed123214/kitagent/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
   <a href="frontend/package.json"><img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" /></a>
   <a href="docs/kubernetes-sandbox.md"><img src="https://img.shields.io/badge/Kubernetes-Sandbox-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes Sandbox" /></a>
@@ -37,7 +37,7 @@ KitAgent 面向希望构建和使用 AI 自动化工具的开发者。你可以�
 
 <p align="center">
   会话管理 · 多轮对话 · 工具时间线 · 运行报告<br />
-  <a href="docs/assets/web-workbench-overview.png">查看高清截图</a> · <a href="https://raw.githubusercontent.com/zed123214/agent-runtime-kit/main/docs/assets/web-workbench-demo.webm">下载完整视频</a> · <a href="docs/web-workbench.md">启动工作台</a>
+  <a href="docs/assets/web-workbench-overview.png">查看高清截图</a> · <a href="https://raw.githubusercontent.com/zed123214/kitagent/main/docs/assets/web-workbench-demo.webm">下载完整视频</a> · <a href="docs/web-workbench.md">启动工作台</a>
 </p>
 
 以仓库检查为例：
@@ -141,8 +141,8 @@ Web 网关持续连接 Core，刷新浏览器后可以继续观察正在执行�
 ### 1. 安装并配置模型
 
 ```bash
-git clone https://github.com/zed123214/agent-runtime-kit.git
-cd agent-runtime-kit
+git clone https://github.com/zed123214/kitagent.git
+cd kitagent
 uv sync --frozen --extra web
 cp .env.example .env
 ```
@@ -241,7 +241,7 @@ uv run --frozen --extra graph-sqlite python examples/durable_recovery_demo.py
 
 ## 🤝 参与贡献
 
-欢迎通过 [Issues](https://github.com/zed123214/agent-runtime-kit/issues) 分享使用场景、反馈问题，或提交 Pull Request。开发环境与检查命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎通过 [Issues](https://github.com/zed123214/kitagent/issues) 分享使用场景、反馈问题，或提交 Pull Request。开发环境与检查命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 如果 KitAgent 对你有帮助，欢迎点一个 **Star**，也欢迎分享你用它完成的任务。
 
